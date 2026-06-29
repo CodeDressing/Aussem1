@@ -1,0 +1,115 @@
+# ============================================================
+# AUSSEM1
+# PHASE 1.00 PART 5
+# ENTERPRISE PYTHON DEPENDENCIES
+# FILE: requirements.txt
+# PURPOSE: dependency foundation for Aussem1 backend + AI chatbot
+# AUTHOR: Ryan Schuren
+# ASSISTANT: Alfred
+# STATUS: FOUNDATION ACTIVE
+# ============================================================
+
+
+# ============================================================
+# SECTION 01 - API FRAMEWORK
+# PURPOSE:
+# FastAPI powers the backend API, chatbot endpoints,
+# health checks, and future property intelligence services.
+# ============================================================
+
+fastapi
+uvicorn[standard]
+
+
+# ============================================================
+# SECTION 02 - ENVIRONMENT CONFIGURATION
+# PURPOSE:
+# Used for environment variables, API keys, deployment settings,
+# future database URLs, and model configuration.
+# ============================================================
+
+python-dotenv
+pydantic
+pydantic-settings
+
+
+# ============================================================
+# SECTION 03 - HTTP CLIENTS
+# PURPOSE:
+# Used for future public-record lookups, data-source connectors,
+# MLS/RESO integrations, mapping APIs, and AI service calls.
+# ============================================================
+
+httpx
+requests
+
+
+# ============================================================
+# SECTION 04 - DATA PROCESSING
+# PURPOSE:
+# Used for property records, comparable analysis, CSV imports,
+# market data processing, and future valuation logic.
+# ============================================================
+
+pandas
+numpy
+
+
+# ============================================================
+# SECTION 05 - DATABASE FOUNDATION
+# PURPOSE:
+# SQLAlchemy supports structured persistence for chat memory,
+# properties, public records, valuation outputs, and training logs.
+# SQLite is available by default in Python.
+# PostgreSQL support can be added later when deployment requires it.
+# ============================================================
+
+sqlalchemy
+
+
+# ============================================================
+# SECTION 06 - AI / LLM FOUNDATION
+# PURPOSE:
+# OpenAI powers the initial AI chatbot and future reasoning layer.
+# This will eventually support property intelligence, valuation
+# explanation, comparable summaries, and self-improvement workflows.
+# ============================================================
+
+openai
+
+
+# ============================================================
+# SECTION 07 - VALIDATION / PARSING
+# PURPOSE:
+# Used for structured addresses, user inputs, API responses,
+# training records, and future property intelligence schemas.
+# ============================================================
+
+email-validator
+
+
+# ============================================================
+# SECTION 08 - TESTING FOUNDATION
+# PURPOSE:
+# Enables early health tests, chatbot tests, API tests,
+# and future regression testing.
+# ============================================================
+
+pytest
+pytest-asyncio
+
+
+# ============================================================
+# SECTION 09 - FUTURE DEPENDENCY NOTES
+# PURPOSE:
+# Add later only when needed:
+#
+# psycopg[binary]     - PostgreSQL production database
+# alembic             - database migrations
+# redis               - cache and background job support
+# scikit-learn        - machine learning models
+# beautifulsoup4      - HTML parsing only when legally appropriate
+# playwright          - browser automation only if explicitly required
+# python-jose         - JWT auth
+# passlib[bcrypt]     - password hashing
+# ============================================================
