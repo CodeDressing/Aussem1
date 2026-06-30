@@ -1,0 +1,833 @@
+{
+  "01_platform_identity": {
+    "project_name": "Aussem1",
+    "file": "app/data/property_knowledge.json",
+    "phase": "PHASE 1.00 PART 4.00",
+    "version": "0.2.0",
+    "status": "enterprise_knowledge_foundation_active",
+    "purpose": "Enterprise property knowledge base for the Aussem1 AI chatbot, future property intelligence engine, public records engine, comparable analysis engine, valuation system, market intelligence system, and supervised learning pipeline.",
+    "mission": "Turn one property address into complete residential real estate intelligence.",
+    "motto": "One Address. Unlimited Intelligence.",
+    "core_user_action": "Enter a property address.",
+    "core_platform_output": "Explain property status, estimated value, public record context, comparable homes, missing data, confidence level, and recommended next steps.",
+    "platform_principles": [
+      "Never invent property facts.",
+      "Never present estimates as verified facts.",
+      "Always explain uncertainty.",
+      "Always identify missing information.",
+      "Always separate verified data from inferred data.",
+      "Always preserve useful user questions for training.",
+      "Always prefer source-backed analysis over confident speculation.",
+      "Always improve through supervised review, not uncontrolled self-modification."
+    ]
+  },
+  "02_ai_behavior_rules": {
+    "global_response_rules": [
+      {
+        "rule_id": "AI_RULE_001",
+        "name": "No fabricated property facts",
+        "instruction": "If a property fact is not present in verified data, the AI must say the fact is unknown."
+      },
+      {
+        "rule_id": "AI_RULE_002",
+        "name": "Estimate labeling",
+        "instruction": "Any valuation, price range, market prediction, or probability must be labeled as an estimate unless verified by a trusted source."
+      },
+      {
+        "rule_id": "AI_RULE_003",
+        "name": "Source awareness",
+        "instruction": "When discussing public records, MLS, taxes, ownership, or status, the AI must identify whether the source is connected, missing, planned, or user-provided."
+      },
+      {
+        "rule_id": "AI_RULE_004",
+        "name": "Confidence scoring",
+        "instruction": "Every property intelligence answer should eventually include confidence level, positive confidence factors, negative confidence factors, and missing data."
+      },
+      {
+        "rule_id": "AI_RULE_005",
+        "name": "Training capture",
+        "instruction": "Every interaction should be logged with user question, answer, intent, confidence, missing data, and metadata for future supervised learning."
+      },
+      {
+        "rule_id": "AI_RULE_006",
+        "name": "Correction handling",
+        "instruction": "If a user corrects the AI, the correction should be saved as supervised review data, not automatically treated as verified truth."
+      },
+      {
+        "rule_id": "AI_RULE_007",
+        "name": "Professional tone",
+        "instruction": "Responses should be calm, direct, useful, and structured for real estate decision-making."
+      }
+    ],
+    "forbidden_claims": [
+      "Do not claim a property is active unless active listing data is verified.",
+      "Do not claim a property is under contract unless listing or broker data verifies it.",
+      "Do not claim a property has sold unless sale records, MLS closed data, deed records, or trusted public records verify it.",
+      "Do not claim an exact home value without clearly labeling it as estimated.",
+      "Do not claim ownership information unless a verified ownership or deed source confirms it.",
+      "Do not claim public records have been searched unless a connector actually performed the lookup.",
+      "Do not imply legal, tax, financing, or investment advice without appropriate disclaimers."
+    ],
+    "preferred_answer_structure": [
+      "Direct answer",
+      "Known information",
+      "Estimated information",
+      "Missing information",
+      "Confidence level",
+      "Recommended next steps"
+    ]
+  },
+  "03_real_estate_glossary": {
+    "active": {
+      "definition": "A listing status indicating a property is currently available for sale through a listing source.",
+      "source_requirement": "Requires MLS, IDX, RESO, broker feed, or listing-provider data."
+    },
+    "under_contract": {
+      "definition": "A status indicating a seller has accepted an offer but the sale has not yet closed.",
+      "source_requirement": "Usually requires MLS, broker, or transaction status data."
+    },
+    "pending": {
+      "definition": "A listing status commonly used when a property is under contract and moving toward closing.",
+      "source_requirement": "Requires listing data or broker confirmation."
+    },
+    "sold": {
+      "definition": "A property transaction has closed and ownership has transferred.",
+      "source_requirement": "Can be supported by MLS closed data, deed records, county recorder data, or sale history records."
+    },
+    "off_market": {
+      "definition": "A property is not currently publicly listed for sale through connected listing sources.",
+      "source_requirement": "Requires active listing checks to confirm."
+    },
+    "comparable_sale": {
+      "definition": "A recently sold property similar enough to the subject property to help estimate market value.",
+      "important_factors": [
+        "distance",
+        "sale date",
+        "property type",
+        "square footage",
+        "bedrooms",
+        "bathrooms",
+        "lot size",
+        "year built",
+        "condition",
+        "school district",
+        "market timing"
+      ]
+    },
+    "assessed_value": {
+      "definition": "A value assigned by a taxing authority for property tax purposes.",
+      "warning": "Assessed value is not the same as current market value."
+    },
+    "market_value": {
+      "definition": "The probable price a property would sell for in an open and competitive market.",
+      "warning": "Market value is an estimate unless supported by an actual transaction."
+    },
+    "appraisal": {
+      "definition": "A professional opinion of value usually prepared by a licensed appraiser.",
+      "warning": "Aussem1 estimates are not a substitute for a licensed appraisal."
+    },
+    "public_records": {
+      "definition": "Government or public-source records relating to property ownership, taxes, assessments, deeds, permits, parcels, or recorded transactions.",
+      "warning": "Availability and accuracy vary by jurisdiction."
+    }
+  },
+  "04_property_status_intelligence": {
+    "purpose": "Determine whether a property is active, under contract, sold, off market, or unknown.",
+    "status_values": {
+      "active": {
+        "meaning": "Property appears available for purchase.",
+        "best_sources": [
+          "MLS feed",
+          "IDX feed",
+          "RESO feed",
+          "broker feed",
+          "listing provider"
+        ],
+        "confidence_requirements": [
+          "recent source timestamp",
+          "matching address",
+          "matching parcel or listing ID",
+          "valid listing status"
+        ]
+      },
+      "under_contract": {
+        "meaning": "Property appears to have an accepted offer but sale is not closed.",
+        "best_sources": [
+          "MLS pending status",
+          "broker transaction update",
+          "listing status feed"
+        ],
+        "public_record_limitation": "Public records usually do not show under-contract status before closing."
+      },
+      "sold": {
+        "meaning": "Sale appears closed.",
+        "best_sources": [
+          "MLS closed sale",
+          "county deed recording",
+          "county sale record",
+          "recorder office",
+          "public sale history"
+        ],
+        "confidence_requirements": [
+          "closing date",
+          "sale price",
+          "recording date",
+          "buyer/seller or transaction reference",
+          "matching address or parcel"
+        ]
+      },
+      "off_market": {
+        "meaning": "Property does not appear active in connected listing sources.",
+        "warning": "A property can be privately marketed or listed in a disconnected source."
+      },
+      "unknown": {
+        "meaning": "Available data is insufficient to determine status.",
+        "proper_response": "Aussem1 should clearly state that status cannot be verified yet."
+      }
+    },
+    "status_reasoning_rules": [
+      "If active listing source confirms active, classify as active.",
+      "If listing source confirms pending or under contract, classify as under_contract.",
+      "If public sale or deed record confirms closed sale, classify as sold.",
+      "If no active listing exists but public record does not show sale, classify as off_market only with caution.",
+      "If sources conflict, classify as unknown and explain conflict.",
+      "If no reliable source exists, classify as unknown."
+    ]
+  },
+  "05_property_valuation_intelligence": {
+    "purpose": "Estimate a property's current market value using facts, sale history, comparable homes, market conditions, and confidence scoring.",
+    "valuation_outputs": {
+      "estimated_low": "Lower bound of estimated value range.",
+      "estimated_mid": "Central estimated value.",
+      "estimated_high": "Upper bound of estimated value range.",
+      "confidence_score": "Numeric confidence from 0.00 to 1.00.",
+      "confidence_level": "very_low, low, medium, high, or very_high.",
+      "valuation_summary": "Plain-English explanation of how estimate was formed.",
+      "missing_data_warning": "List of missing items reducing confidence."
+    },
+    "required_inputs": [
+      "full_address",
+      "property_type",
+      "bedrooms",
+      "bathrooms",
+      "square_feet",
+      "lot_size",
+      "year_built",
+      "condition",
+      "sale_history",
+      "tax_assessment",
+      "recent_comparable_sales",
+      "current_listing_status",
+      "market_trend"
+    ],
+    "high_value_inputs": [
+      "renovation history",
+      "finished basement",
+      "garage spaces",
+      "pool",
+      "view",
+      "waterfront",
+      "school district",
+      "walkability",
+      "commute value",
+      "property defects",
+      "zoning constraints",
+      "flood risk",
+      "neighborhood demand"
+    ],
+    "valuation_rules": [
+      "Never estimate value from assessed value alone.",
+      "Never rely on listing price alone.",
+      "Use recent closed comparable sales when available.",
+      "Adjust comparable sales for major property differences.",
+      "Reduce confidence when property condition is unknown.",
+      "Reduce confidence when comparable sales are old.",
+      "Reduce confidence when market direction is volatile.",
+      "Increase confidence when multiple recent similar sales support a tight value range.",
+      "Explain why the value range is wide or narrow."
+    ],
+    "valuation_confidence_factors": {
+      "increase_confidence": [
+        "verified address",
+        "verified property facts",
+        "recent sale history",
+        "recent nearby comparable sales",
+        "matching property type",
+        "known condition",
+        "stable local market",
+        "consistent comparable prices"
+      ],
+      "decrease_confidence": [
+        "missing address",
+        "missing square footage",
+        "unknown condition",
+        "few comparable sales",
+        "old comparable sales",
+        "rapidly changing market",
+        "conflicting data sources",
+        "unique property",
+        "major renovation uncertainty"
+      ]
+    }
+  },
+  "06_comparable_analysis_intelligence": {
+    "purpose": "Select, rank, adjust, and explain comparable properties used for valuation.",
+    "ideal_comparable": {
+      "distance": "Same neighborhood or close geographic area.",
+      "sale_date": "Recently sold, preferably within the last 3 to 6 months when possible.",
+      "property_type": "Same property type as subject property.",
+      "size": "Similar square footage.",
+      "beds_baths": "Similar bedroom and bathroom count.",
+      "lot": "Similar lot size and usability.",
+      "age": "Similar year built or renovation era.",
+      "condition": "Similar interior and exterior condition.",
+      "school_district": "Same school district when school district impacts value.",
+      "market_segment": "Similar buyer pool and price range."
+    },
+    "adjustment_categories": [
+      "location_adjustment",
+      "time_adjustment",
+      "square_footage_adjustment",
+      "bedroom_adjustment",
+      "bathroom_adjustment",
+      "lot_size_adjustment",
+      "condition_adjustment",
+      "renovation_adjustment",
+      "garage_adjustment",
+      "basement_adjustment",
+      "school_district_adjustment",
+      "market_condition_adjustment"
+    ],
+    "comp_quality_levels": {
+      "excellent": "Very similar property, very recent sale, close location, strong data quality.",
+      "good": "Similar property with minor differences and usable sale date.",
+      "acceptable": "Useful but requires meaningful adjustments.",
+      "weak": "Only partially comparable; should reduce confidence.",
+      "invalid": "Too different to support valuation."
+    },
+    "reasoning_rules": [
+      "Explain why each comp was selected.",
+      "Explain why each comp may be weaker than others.",
+      "Avoid using active listing prices as closed-sale evidence.",
+      "Do not treat one comparable as sufficient for strong valuation.",
+      "Prefer multiple comps with consistent adjusted value range.",
+      "Flag outliers clearly."
+    ]
+  },
+  "07_public_records_intelligence": {
+    "purpose": "Use public records to support property identification, ownership context, tax context, assessment context, sale history, and parcel facts.",
+    "source_types": {
+      "county_assessor": {
+        "data": [
+          "assessed value",
+          "property class",
+          "land value",
+          "improvement value",
+          "building facts",
+          "lot size",
+          "tax district"
+        ],
+        "limitations": [
+          "May be outdated",
+          "May not reflect renovations",
+          "Not equal to market value"
+        ]
+      },
+      "county_recorder": {
+        "data": [
+          "deeds",
+          "recorded transfers",
+          "mortgages",
+          "liens where available",
+          "recording dates"
+        ],
+        "limitations": [
+          "May lag behind closing",
+          "May require document interpretation",
+          "May vary by county"
+        ]
+      },
+      "tax_collector": {
+        "data": [
+          "annual tax amount",
+          "tax payment status",
+          "tax history",
+          "municipal tax records"
+        ],
+        "limitations": [
+          "Tax records are not market valuations"
+        ]
+      },
+      "parcel_gis": {
+        "data": [
+          "parcel boundaries",
+          "lot shape",
+          "zoning layers where available",
+          "flood overlays where available",
+          "municipality",
+          "block and lot"
+        ],
+        "limitations": [
+          "GIS boundaries should be verified for legal use",
+          "Map layers may be approximate"
+        ]
+      }
+    },
+    "public_record_rules": [
+      "Public records should be treated as source-specific and jurisdiction-dependent.",
+      "A missing public record does not always mean the fact does not exist.",
+      "Recorded sale date may differ from contract date.",
+      "Ownership records may require careful interpretation.",
+      "Legal conclusions should not be made without professional review."
+    ]
+  },
+  "08_property_characteristics": {
+    "core_fields": [
+      "address",
+      "parcel_id",
+      "municipality",
+      "county",
+      "state",
+      "zip_code",
+      "property_type",
+      "beds",
+      "baths",
+      "square_feet",
+      "lot_size",
+      "year_built",
+      "stories",
+      "garage_spaces",
+      "basement",
+      "pool",
+      "heating",
+      "cooling",
+      "water",
+      "sewer",
+      "taxes",
+      "assessment",
+      "last_sale_date",
+      "last_sale_price"
+    ],
+    "condition_fields": [
+      "interior_condition",
+      "exterior_condition",
+      "roof_condition",
+      "kitchen_condition",
+      "bathroom_condition",
+      "flooring_condition",
+      "mechanical_condition",
+      "renovation_quality",
+      "deferred_maintenance",
+      "known_defects"
+    ],
+    "location_fields": [
+      "neighborhood",
+      "school_district",
+      "distance_to_downtown",
+      "distance_to_train",
+      "distance_to_highway",
+      "walkability",
+      "noise_exposure",
+      "flood_risk",
+      "zoning",
+      "nearby_commercial",
+      "privacy",
+      "view_quality"
+    ],
+    "data_quality_rules": [
+      "Square footage can differ by source.",
+      "Bedroom count can differ between listing and tax records.",
+      "Bathroom count may be represented as full, half, or total.",
+      "Lot size may be in acres or square feet and must be normalized.",
+      "Year built may not reflect major renovations.",
+      "Condition is often unavailable in public records."
+    ]
+  },
+  "09_market_intelligence": {
+    "purpose": "Analyze broader market conditions affecting property value, status, demand, and timing.",
+    "market_metrics": [
+      "median_sale_price",
+      "average_sale_price",
+      "price_per_square_foot",
+      "inventory",
+      "new_listings",
+      "pending_sales",
+      "closed_sales",
+      "days_on_market",
+      "sale_to_list_ratio",
+      "absorption_rate",
+      "months_of_supply",
+      "price_reductions",
+      "buyer_demand",
+      "seller_supply"
+    ],
+    "market_direction_values": [
+      "rising",
+      "stable",
+      "declining",
+      "volatile",
+      "unknown"
+    ],
+    "market_reasoning_rules": [
+      "A rising market may support stronger pricing.",
+      "A declining market may require conservative valuation.",
+      "Low inventory may strengthen seller leverage.",
+      "High days on market may indicate weaker demand or overpricing.",
+      "Local market trends matter more than national headlines for a specific property.",
+      "Seasonality can affect listing strategy and sale timing."
+    ]
+  },
+  "10_investment_intelligence": {
+    "purpose": "Evaluate residential property from an investment perspective.",
+    "investment_inputs": [
+      "purchase_price",
+      "estimated_market_value",
+      "estimated_rent",
+      "taxes",
+      "insurance",
+      "maintenance",
+      "repairs",
+      "vacancy_rate",
+      "mortgage_rate",
+      "down_payment",
+      "closing_costs",
+      "holding_period",
+      "exit_value",
+      "market_appreciation"
+    ],
+    "investment_outputs": [
+      "cash_flow_estimate",
+      "cap_rate",
+      "gross_rent_multiplier",
+      "estimated_equity",
+      "repair_adjusted_value",
+      "risk_score",
+      "investment_summary",
+      "confidence_score"
+    ],
+    "rules": [
+      "Investment analysis requires assumptions.",
+      "Assumptions should be visible to the user.",
+      "Rental estimates should be labeled as estimates.",
+      "Repair costs should not be guessed without user input or data source.",
+      "Risk should increase when taxes, insurance, rent, repairs, or vacancy are unknown."
+    ]
+  },
+  "11_neighborhood_intelligence": {
+    "purpose": "Understand location context around the property.",
+    "analysis_categories": [
+      "school_district",
+      "commute_access",
+      "downtown_access",
+      "shopping_access",
+      "parks",
+      "noise",
+      "walkability",
+      "transit",
+      "flood_risk",
+      "crime_context",
+      "demographics",
+      "market_demand",
+      "neighborhood_reputation",
+      "future_development"
+    ],
+    "rules": [
+      "Neighborhood analysis should be factual and source-aware.",
+      "Avoid unsupported claims about safety or demographics.",
+      "School information should come from trusted school or district sources.",
+      "Commute analysis should use mapping data when available.",
+      "Local context should affect valuation confidence when relevant."
+    ]
+  },
+  "12_buyer_intelligence": {
+    "purpose": "Help buyers understand property value, risk, market position, and offer strategy.",
+    "buyer_questions": [
+      "Is this property overpriced?",
+      "What should I offer?",
+      "How much competition might exist?",
+      "Is this a good neighborhood?",
+      "What are the risks?",
+      "What comparable homes sold nearby?",
+      "How long has this been on market?",
+      "Should I wait or act quickly?"
+    ],
+    "buyer_guidance_rules": [
+      "Do not provide legal advice.",
+      "Do not guarantee negotiation outcomes.",
+      "Base offer guidance on comps, listing history, demand, and property condition.",
+      "Explain uncertainty in any offer recommendation.",
+      "Recommend professional review for contracts, inspections, financing, and legal questions."
+    ]
+  },
+  "13_seller_intelligence": {
+    "purpose": "Help sellers understand pricing, preparation, listing strategy, and likely buyer response.",
+    "seller_questions": [
+      "What should I list my home for?",
+      "What improvements increase value?",
+      "Is now a good time to sell?",
+      "How do I compare to nearby homes?",
+      "Should I price aggressively or conservatively?",
+      "What might buyers object to?",
+      "How long could it take to sell?"
+    ],
+    "seller_guidance_rules": [
+      "Pricing should be based on comparable sales, current competition, condition, and market trend.",
+      "Preparation recommendations should distinguish high-impact from low-impact improvements.",
+      "Listing strategy should consider market demand and seller timeline.",
+      "Never promise sale price or sale timing."
+    ]
+  },
+  "14_broker_and_agent_intelligence": {
+    "purpose": "Support professional real estate workflows, review, compliance, and market interpretation.",
+    "professional_use_cases": [
+      "listing review",
+      "pricing support",
+      "comp explanation",
+      "seller presentation support",
+      "buyer offer support",
+      "market summary generation",
+      "public record review",
+      "transaction risk flags",
+      "audit trail support"
+    ],
+    "rules": [
+      "Professional users need source traceability.",
+      "Broker review should be available for high-stakes outputs.",
+      "Compliance-sensitive outputs should be flagged.",
+      "All AI-generated real estate advice should remain reviewable."
+    ]
+  },
+  "15_confidence_scoring_system": {
+    "confidence_levels": {
+      "very_low": {
+        "range": "0.00-0.39",
+        "meaning": "Insufficient reliable data. Answer should be treated as directional only."
+      },
+      "low": {
+        "range": "0.40-0.59",
+        "meaning": "Some context exists, but important data is missing."
+      },
+      "medium": {
+        "range": "0.60-0.74",
+        "meaning": "Useful preliminary analysis with some missing or uncertain data."
+      },
+      "high": {
+        "range": "0.75-0.89",
+        "meaning": "Strong supporting data from relevant sources."
+      },
+      "very_high": {
+        "range": "0.90-1.00",
+        "meaning": "Multiple high-quality sources support a consistent conclusion."
+      }
+    },
+    "scoring_inputs": [
+      "intent_clarity",
+      "address_quality",
+      "source_quality",
+      "source_recency",
+      "data_completeness",
+      "comparable_strength",
+      "market_stability",
+      "source_agreement",
+      "property_uniqueness",
+      "missing_information_count"
+    ],
+    "required_explanation": "Every confidence score should explain why the score is high or low."
+  },
+  "16_learning_system_rules": {
+    "purpose": "Guide how Aussem1 improves through logged interactions and supervised review.",
+    "learning_pipeline": [
+      "Capture user question.",
+      "Capture chatbot answer.",
+      "Capture intent.",
+      "Capture confidence.",
+      "Capture missing data.",
+      "Capture property address if present.",
+      "Capture user feedback if provided.",
+      "Flag low-confidence interactions.",
+      "Cluster repeated unanswered questions.",
+      "Create supervised review tasks.",
+      "Update knowledge base only after review."
+    ],
+    "self_training_policy": {
+      "allowed": [
+        "Log interactions",
+        "Identify missing topics",
+        "Recommend knowledge updates",
+        "Prepare training datasets",
+        "Cluster similar questions",
+        "Track confidence trends"
+      ],
+      "not_allowed_without_review": [
+        "Automatically rewriting core knowledge",
+        "Automatically treating user corrections as facts",
+        "Automatically changing valuation rules",
+        "Automatically fine-tuning production models",
+        "Automatically adding unverifiable public record facts"
+      ]
+    }
+  },
+  "17_data_source_registry": {
+    "source_quality_tiers": {
+      "tier_1": {
+        "description": "Highest confidence operational sources.",
+        "examples": [
+          "MLS/RESO feed",
+          "county deed recorder",
+          "county tax assessor",
+          "official parcel GIS",
+          "licensed appraisal where available"
+        ]
+      },
+      "tier_2": {
+        "description": "Useful but may require verification.",
+        "examples": [
+          "listing provider websites",
+          "broker-provided data",
+          "public sale aggregators",
+          "school district data",
+          "municipal records"
+        ]
+      },
+      "tier_3": {
+        "description": "Directional or user-provided data.",
+        "examples": [
+          "user-provided renovation details",
+          "unverified listing claims",
+          "manual notes",
+          "estimated repairs",
+          "general web search snippets"
+        ]
+      }
+    },
+    "future_integrations": {
+      "mls_reso": {
+        "status": "planned",
+        "purpose": "Active, pending, sold, and listing detail intelligence."
+      },
+      "county_assessor": {
+        "status": "planned",
+        "purpose": "Assessment, land, improvement, and property characteristic data."
+      },
+      "county_recorder": {
+        "status": "planned",
+        "purpose": "Deeds, sale records, transfers, and recorded instruments."
+      },
+      "parcel_gis": {
+        "status": "planned",
+        "purpose": "Parcel boundaries, mapping, zoning layers, and geographic context."
+      },
+      "school_data": {
+        "status": "planned",
+        "purpose": "School district and school assignment intelligence."
+      },
+      "market_statistics": {
+        "status": "planned",
+        "purpose": "Inventory, days on market, price trends, and local demand."
+      }
+    }
+  },
+  "18_answer_templates": {
+    "missing_address": {
+      "template": "I can help with that, but I need the property address first. Once you provide the address, Aussem1 can begin building property context for status, value, public records, comparable homes, and future valuation intelligence."
+    },
+    "unknown_status": {
+      "template": "I cannot verify the current status from the available data yet. Public records may help confirm sold history, but active or under-contract status usually requires MLS, IDX, RESO, broker, or listing-provider data."
+    },
+    "valuation_unavailable": {
+      "template": "I can prepare a valuation framework, but I do not yet have enough verified property facts, sale history, comparable sales, and listing-status data to provide a responsible estimate."
+    },
+    "public_records_unconnected": {
+      "template": "Public-record intelligence is planned, but no live public-record connector has verified this property yet. The correct sources will depend on county, municipality, state, assessor access, recorder access, and parcel data availability."
+    },
+    "low_confidence": {
+      "template": "Confidence is low because important information is missing. This should be treated as preliminary guidance, not a verified property conclusion."
+    }
+  },
+  "19_example_training_questions": {
+    "property_status": [
+      "Is 123 Main Street active or sold?",
+      "Is this home under contract?",
+      "Did this property recently sell?",
+      "Is the house still available?",
+      "What is the listing status?"
+    ],
+    "property_value": [
+      "What is this home worth?",
+      "What is the estimated current value?",
+      "Is this property overpriced?",
+      "What should this house sell for?",
+      "How much is this home worth today?"
+    ],
+    "comparables": [
+      "Show me comparable homes.",
+      "What nearby homes sold recently?",
+      "Compare this house to similar properties.",
+      "What comps support the price?",
+      "Which homes are most similar?"
+    ],
+    "public_records": [
+      "What public records exist for this property?",
+      "Who owns this property?",
+      "What are the taxes?",
+      "When did it last sell?",
+      "What is the assessed value?"
+    ],
+    "investment": [
+      "Would this be a good investment?",
+      "Could this work as a rental?",
+      "What is the ROI?",
+      "What repairs would affect profit?",
+      "What is the upside?"
+    ]
+  },
+  "20_future_modules": {
+    "property_status_engine": {
+      "status": "planned",
+      "description": "Classifies active, under contract, sold, off market, or unknown using connected data sources."
+    },
+    "valuation_engine": {
+      "status": "planned",
+      "description": "Produces estimated value ranges with confidence scoring and comp support."
+    },
+    "comparable_engine": {
+      "status": "planned",
+      "description": "Finds, ranks, adjusts, and explains comparable sales."
+    },
+    "public_records_engine": {
+      "status": "planned",
+      "description": "Connects to legally available assessor, recorder, parcel, tax, and deed sources."
+    },
+    "market_intelligence_engine": {
+      "status": "planned",
+      "description": "Analyzes demand, supply, trends, pricing pressure, and local market conditions."
+    },
+    "learning_engine": {
+      "status": "planned",
+      "description": "Turns chatbot interactions into supervised learning datasets and improvement recommendations."
+    },
+    "review_dashboard": {
+      "status": "planned",
+      "description": "Allows human review of unanswered questions, low-confidence answers, and proposed knowledge updates."
+    }
+  },
+  "21_file_governance": {
+    "rules": [
+      "This file is a knowledge base, not a database replacement.",
+      "This file should contain stable real estate concepts, AI rules, reasoning frameworks, and source policies.",
+      "Live property facts should not be hardcoded here.",
+      "User-specific records should not be stored here.",
+      "Training logs should remain in training_log.json or a future database.",
+      "As the file grows, sections may be extracted into specialized knowledge modules while preserving this registry."
+    ],
+    "future_split_plan": [
+      "property_status_knowledge.json",
+      "valuation_knowledge.json",
+      "public_records_knowledge.json",
+      "comparable_analysis_knowledge.json",
+      "market_intelligence_knowledge.json",
+      "investment_knowledge.json",
+      "ai_behavior_knowledge.json"
+    ]
+  }
+}
