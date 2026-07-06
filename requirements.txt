@@ -1,20 +1,29 @@
 # ============================================================
 # AUSSEM1
-# PHASE 1.00 PART 5
+# PHASE 1.00 PART 9.08
 # ENTERPRISE PYTHON DEPENDENCIES
 # FILE: requirements.txt
-# PURPOSE: dependency foundation for Aussem1 backend + AI chatbot
-# AUTHOR: Ryan Schuren
-# ASSISTANT: Alfred
-# STATUS: FOUNDATION ACTIVE
+# PURPOSE:
+# Dependency foundation for the Aussem1 FastAPI backend,
+# visual dashboard, AI chatbot, memory system, training logger,
+# property intelligence foundation, and future ML/data systems.
+#
+# AUTHOR:
+# Ryan Schuren
+#
+# ASSISTANT:
+# Alfred
+#
+# STATUS:
+# ENTERPRISE DASHBOARD RUNTIME ACTIVE
 # ============================================================
 
 
 # ============================================================
 # SECTION 01 - API FRAMEWORK
 # PURPOSE:
-# FastAPI powers the backend API, chatbot endpoints,
-# health checks, and future property intelligence services.
+# FastAPI powers the backend API, chatbot endpoints, health
+# checks, dashboard APIs, and future property intelligence routes.
 # ============================================================
 
 fastapi
@@ -22,10 +31,20 @@ uvicorn[standard]
 
 
 # ============================================================
-# SECTION 02 - ENVIRONMENT CONFIGURATION
+# SECTION 02 - TEMPLATE / VISUAL DASHBOARD RUNTIME
+# PURPOSE:
+# Jinja2 is required by FastAPI's Jinja2Templates system.
+# Without this package, /dashboard falls back to diagnostic mode.
+# ============================================================
+
+jinja2
+
+
+# ============================================================
+# SECTION 03 - ENVIRONMENT CONFIGURATION
 # PURPOSE:
 # Used for environment variables, API keys, deployment settings,
-# future database URLs, and model configuration.
+# database URLs, and future model configuration.
 # ============================================================
 
 python-dotenv
@@ -34,10 +53,10 @@ pydantic-settings
 
 
 # ============================================================
-# SECTION 03 - HTTP CLIENTS
+# SECTION 04 - HTTP CLIENTS
 # PURPOSE:
-# Used for future public-record lookups, data-source connectors,
-# MLS/RESO integrations, mapping APIs, and AI service calls.
+# Used for future public-record lookups, source connectors,
+# mapping APIs, MLS/RESO integrations, and AI service calls.
 # ============================================================
 
 httpx
@@ -45,10 +64,10 @@ requests
 
 
 # ============================================================
-# SECTION 04 - DATA PROCESSING
+# SECTION 05 - DATA PROCESSING
 # PURPOSE:
 # Used for property records, comparable analysis, CSV imports,
-# market data processing, and future valuation logic.
+# market data processing, valuation logic, and future analytics.
 # ============================================================
 
 pandas
@@ -56,43 +75,42 @@ numpy
 
 
 # ============================================================
-# SECTION 05 - DATABASE FOUNDATION
+# SECTION 06 - DATABASE FOUNDATION
 # PURPOSE:
 # SQLAlchemy supports structured persistence for chat memory,
-# properties, public records, valuation outputs, and training logs.
-# SQLite is available by default in Python.
-# PostgreSQL support can be added later when deployment requires it.
+# property profiles, public records, valuation outputs, and
+# training logs.
 # ============================================================
 
 sqlalchemy
 
 
 # ============================================================
-# SECTION 06 - AI / LLM FOUNDATION
+# SECTION 07 - AI / LLM FOUNDATION
 # PURPOSE:
-# OpenAI powers the initial AI chatbot and future reasoning layer.
-# This will eventually support property intelligence, valuation
-# explanation, comparable summaries, and self-improvement workflows.
+# OpenAI supports the initial AI chatbot and future reasoning
+# layer for property intelligence, valuation explanation,
+# comparable summaries, and supervised improvement workflows.
 # ============================================================
 
 openai
 
 
 # ============================================================
-# SECTION 07 - VALIDATION / PARSING
+# SECTION 08 - VALIDATION / PARSING
 # PURPOSE:
-# Used for structured addresses, user inputs, API responses,
-# training records, and future property intelligence schemas.
+# Used for structured user input, future account emails,
+# source responses, training records, and property schemas.
 # ============================================================
 
 email-validator
 
 
 # ============================================================
-# SECTION 08 - TESTING FOUNDATION
+# SECTION 09 - TESTING FOUNDATION
 # PURPOSE:
-# Enables early health tests, chatbot tests, API tests,
-# and future regression testing.
+# Enables health tests, chatbot tests, dashboard route tests,
+# API tests, and future regression testing.
 # ============================================================
 
 pytest
@@ -100,16 +118,17 @@ pytest-asyncio
 
 
 # ============================================================
-# SECTION 09 - FUTURE DEPENDENCY NOTES
+# SECTION 10 - FUTURE DEPENDENCY ROADMAP
 # PURPOSE:
-# Add later only when needed:
+# Add later only when the matching subsystem is actually built.
 #
 # psycopg[binary]     - PostgreSQL production database
 # alembic             - database migrations
-# redis               - cache and background job support
-# scikit-learn        - machine learning models
-# beautifulsoup4      - HTML parsing only when legally appropriate
+# redis               - cache and background jobs
+# scikit-learn        - classical ML models
+# scipy               - statistical analysis
+# beautifulsoup4      - lawful HTML parsing where appropriate
 # playwright          - browser automation only if explicitly required
-# python-jose         - JWT auth
+# python-jose         - JWT authentication
 # passlib[bcrypt]     - password hashing
 # ============================================================
