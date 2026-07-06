@@ -1,0 +1,967 @@
+<!-- ============================================================
+AUSSEM1
+PHASE 1.00 PART 9.01
+ENTERPRISE VISUAL INTELLIGENCE DASHBOARD TEMPLATE
+FILE: app/templates/dashboard.html
+PURPOSE:
+Live browser dashboard for Aussem1 chatbot, memory, training,
+property intelligence foundation, system status, and future AI
+operations monitoring.
+
+AUTHOR:
+Ryan Schuren
+
+ASSISTANT:
+Alfred
+
+STATUS:
+ENTERPRISE VISUAL FOUNDATION ACTIVE
+============================================================ -->
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <!-- ========================================================
+    SECTION 01 - DOCUMENT METADATA
+    ========================================================= -->
+
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="description" content="Aussem1 Enterprise Real Estate Intelligence Dashboard" />
+    <meta name="theme-color" content="#020617" />
+
+    <title>Aussem1 Intelligence Dashboard</title>
+
+    <!-- ========================================================
+    SECTION 02 - ENTERPRISE DASHBOARD STYLES
+    NOTE:
+    These styles are temporarily embedded for Phase 1 visual speed.
+    Next phase should move them into:
+    app/static/css/dashboard.css
+    ========================================================= -->
+
+    <style>
+        :root {
+            --bg-primary: #020617;
+            --bg-secondary: #0f172a;
+            --bg-panel: rgba(15, 23, 42, 0.92);
+            --bg-panel-soft: rgba(30, 41, 59, 0.74);
+            --bg-card: rgba(15, 23, 42, 0.82);
+
+            --text-primary: #f8fafc;
+            --text-secondary: #cbd5e1;
+            --text-muted: #94a3b8;
+
+            --blue: #38bdf8;
+            --blue-dark: #2563eb;
+            --green: #34d399;
+            --yellow: #fbbf24;
+            --red: #fb7185;
+            --purple: #a78bfa;
+
+            --line: rgba(148, 163, 184, 0.18);
+            --line-bright: rgba(56, 189, 248, 0.35);
+
+            --radius-lg: 30px;
+            --radius-md: 22px;
+            --radius-sm: 16px;
+
+            --shadow-heavy: 0 36px 110px rgba(0, 0, 0, 0.48);
+            --shadow-soft: 0 20px 60px rgba(0, 0, 0, 0.32);
+        }
+
+        * {
+            box-sizing: border-box;
+        }
+
+        html {
+            scroll-behavior: smooth;
+        }
+
+        body {
+            margin: 0;
+            min-height: 100vh;
+            color: var(--text-primary);
+            font-family:
+                Inter,
+                ui-sans-serif,
+                system-ui,
+                -apple-system,
+                BlinkMacSystemFont,
+                "Segoe UI",
+                sans-serif;
+            background:
+                radial-gradient(circle at 12% 0%, rgba(56, 189, 248, 0.24), transparent 30%),
+                radial-gradient(circle at 86% 5%, rgba(167, 139, 250, 0.20), transparent 32%),
+                radial-gradient(circle at 50% 100%, rgba(52, 211, 153, 0.10), transparent 32%),
+                linear-gradient(135deg, #020617 0%, #0f172a 50%, #020617 100%);
+            overflow-x: hidden;
+        }
+
+        a {
+            color: inherit;
+        }
+
+        .dashboard-shell {
+            width: min(1560px, calc(100% - 42px));
+            margin: 0 auto;
+            padding: 32px 0 64px;
+        }
+
+        .glass-panel {
+            background: var(--bg-panel);
+            border: 1px solid var(--line);
+            border-radius: var(--radius-lg);
+            box-shadow: var(--shadow-heavy);
+            backdrop-filter: blur(20px);
+        }
+
+        .dashboard-header {
+            display: grid;
+            grid-template-columns: 1.35fr 0.65fr;
+            gap: 22px;
+            margin-bottom: 22px;
+        }
+
+        .hero-panel {
+            padding: 40px;
+            position: relative;
+            overflow: hidden;
+        }
+
+        .hero-panel::after {
+            content: "";
+            position: absolute;
+            right: -160px;
+            bottom: -180px;
+            width: 420px;
+            height: 420px;
+            background: radial-gradient(circle, rgba(56, 189, 248, 0.22), transparent 70%);
+            pointer-events: none;
+        }
+
+        .eyebrow {
+            color: var(--blue);
+            letter-spacing: 0.18em;
+            text-transform: uppercase;
+            font-size: 12px;
+            font-weight: 900;
+            margin-bottom: 18px;
+        }
+
+        h1 {
+            margin: 0;
+            max-width: 950px;
+            font-size: clamp(42px, 6vw, 82px);
+            line-height: 0.94;
+            letter-spacing: -0.07em;
+        }
+
+        .hero-copy {
+            max-width: 850px;
+            color: var(--text-muted);
+            font-size: 18px;
+            line-height: 1.75;
+            margin: 24px 0 0;
+        }
+
+        .hero-actions {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 12px;
+            margin-top: 28px;
+        }
+
+        .button-link,
+        button {
+            border: 0;
+            border-radius: 16px;
+            padding: 14px 18px;
+            font: inherit;
+            font-weight: 900;
+            cursor: pointer;
+            text-decoration: none;
+        }
+
+        .button-primary {
+            background: linear-gradient(135deg, var(--blue), var(--blue-dark));
+            color: white;
+        }
+
+        .button-secondary {
+            background: rgba(15, 23, 42, 0.88);
+            color: var(--text-secondary);
+            border: 1px solid var(--line);
+        }
+
+        .status-panel {
+            padding: 28px;
+            display: flex;
+            flex-direction: column;
+            justify-content: space-between;
+            gap: 24px;
+        }
+
+        .live-pill {
+            display: inline-flex;
+            align-items: center;
+            gap: 10px;
+            width: fit-content;
+            padding: 10px 14px;
+            border-radius: 999px;
+            background: rgba(52, 211, 153, 0.10);
+            border: 1px solid rgba(52, 211, 153, 0.26);
+            color: var(--green);
+            font-size: 13px;
+            font-weight: 900;
+        }
+
+        .pulse-dot {
+            width: 10px;
+            height: 10px;
+            border-radius: 999px;
+            background: var(--green);
+            box-shadow: 0 0 0 8px rgba(52, 211, 153, 0.12);
+        }
+
+        .deployment-label {
+            color: var(--text-muted);
+            line-height: 1.6;
+            font-size: 14px;
+        }
+
+        .tag-wrap {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 8px;
+        }
+
+        .tag {
+            display: inline-flex;
+            align-items: center;
+            padding: 8px 11px;
+            border-radius: 999px;
+            border: 1px solid var(--line);
+            color: var(--text-muted);
+            font-size: 12px;
+            font-weight: 800;
+        }
+
+        .tag.green {
+            color: var(--green);
+            border-color: rgba(52, 211, 153, 0.28);
+            background: rgba(52, 211, 153, 0.07);
+        }
+
+        .tag.blue {
+            color: var(--blue);
+            border-color: rgba(56, 189, 248, 0.28);
+            background: rgba(56, 189, 248, 0.07);
+        }
+
+        .tag.yellow {
+            color: var(--yellow);
+            border-color: rgba(251, 191, 36, 0.28);
+            background: rgba(251, 191, 36, 0.07);
+        }
+
+        .tag.purple {
+            color: var(--purple);
+            border-color: rgba(167, 139, 250, 0.28);
+            background: rgba(167, 139, 250, 0.07);
+        }
+
+        .dashboard-grid {
+            display: grid;
+            grid-template-columns: repeat(12, 1fr);
+            gap: 22px;
+        }
+
+        .panel {
+            padding: 24px;
+            background: var(--bg-panel);
+            border: 1px solid var(--line);
+            border-radius: var(--radius-lg);
+            box-shadow: var(--shadow-soft);
+            backdrop-filter: blur(18px);
+        }
+
+        .span-3 { grid-column: span 3; }
+        .span-4 { grid-column: span 4; }
+        .span-5 { grid-column: span 5; }
+        .span-7 { grid-column: span 7; }
+        .span-8 { grid-column: span 8; }
+        .span-12 { grid-column: span 12; }
+
+        .panel-title {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 14px;
+            margin-bottom: 18px;
+        }
+
+        .panel-title h2,
+        .panel-title h3 {
+            margin: 0;
+            font-size: 18px;
+            letter-spacing: -0.025em;
+        }
+
+        .subtle {
+            color: var(--text-muted);
+            font-size: 13px;
+        }
+
+        .metric-grid {
+            display: grid;
+            grid-template-columns: repeat(2, 1fr);
+            gap: 14px;
+        }
+
+        .metric-card {
+            padding: 18px;
+            border-radius: var(--radius-md);
+            background: var(--bg-panel-soft);
+            border: 1px solid var(--line);
+        }
+
+        .metric-label {
+            color: var(--text-muted);
+            font-size: 11px;
+            text-transform: uppercase;
+            letter-spacing: 0.14em;
+            font-weight: 900;
+        }
+
+        .metric-value {
+            margin-top: 9px;
+            font-size: 34px;
+            font-weight: 950;
+            letter-spacing: -0.06em;
+        }
+
+        .metric-caption {
+            margin-top: 5px;
+            color: var(--text-muted);
+            font-size: 12px;
+        }
+
+        .chat-layout {
+            display: flex;
+            flex-direction: column;
+            gap: 16px;
+        }
+
+        .chat-stream {
+            min-height: 440px;
+            max-height: 610px;
+            overflow-y: auto;
+            padding: 18px;
+            border-radius: var(--radius-md);
+            background: rgba(2, 6, 23, 0.56);
+            border: 1px solid var(--line);
+        }
+
+        .message {
+            display: flex;
+            margin-bottom: 14px;
+        }
+
+        .message.user {
+            justify-content: flex-end;
+        }
+
+        .message.assistant {
+            justify-content: flex-start;
+        }
+
+        .bubble {
+            max-width: 84%;
+            padding: 15px 17px;
+            border-radius: 18px;
+            font-size: 14px;
+            line-height: 1.6;
+            white-space: pre-wrap;
+        }
+
+        .user .bubble {
+            color: white;
+            background: linear-gradient(135deg, #0284c7, #2563eb);
+        }
+
+        .assistant .bubble {
+            color: #e2e8f0;
+            background: rgba(30, 41, 59, 0.95);
+            border: 1px solid var(--line);
+        }
+
+        .chat-form {
+            display: grid;
+            grid-template-columns: 1fr 1.2fr auto;
+            gap: 12px;
+        }
+
+        input,
+        textarea {
+            width: 100%;
+            border: 1px solid var(--line);
+            border-radius: 16px;
+            outline: none;
+            padding: 15px 16px;
+            color: var(--text-primary);
+            background: rgba(15, 23, 42, 0.92);
+            font: inherit;
+        }
+
+        input:focus,
+        textarea:focus {
+            border-color: var(--line-bright);
+            box-shadow: 0 0 0 4px rgba(56, 189, 248, 0.12);
+        }
+
+        .module-grid {
+            display: grid;
+            gap: 12px;
+        }
+
+        .module-card,
+        .log-item {
+            padding: 15px;
+            border-radius: var(--radius-md);
+            background: rgba(15, 23, 42, 0.68);
+            border: 1px solid var(--line);
+            color: var(--text-secondary);
+            font-size: 13px;
+            line-height: 1.55;
+        }
+
+        .module-card strong {
+            display: block;
+            color: var(--text-primary);
+            margin-bottom: 6px;
+        }
+
+        .system-pipeline {
+            display: grid;
+            grid-template-columns: repeat(6, 1fr);
+            gap: 12px;
+        }
+
+        .pipeline-step {
+            min-height: 116px;
+            padding: 16px;
+            border-radius: var(--radius-md);
+            background: rgba(15, 23, 42, 0.74);
+            border: 1px solid var(--line);
+        }
+
+        .pipeline-number {
+            width: 30px;
+            height: 30px;
+            display: grid;
+            place-items: center;
+            border-radius: 999px;
+            background: rgba(56, 189, 248, 0.12);
+            border: 1px solid rgba(56, 189, 248, 0.25);
+            color: var(--blue);
+            font-weight: 900;
+            margin-bottom: 12px;
+        }
+
+        .pipeline-step h4 {
+            margin: 0 0 8px;
+            font-size: 14px;
+        }
+
+        .pipeline-step p {
+            margin: 0;
+            color: var(--text-muted);
+            font-size: 12px;
+            line-height: 1.5;
+        }
+
+        .json-panel {
+            margin: 0;
+            white-space: pre-wrap;
+            word-break: break-word;
+            color: #cbd5e1;
+            font-size: 12px;
+            line-height: 1.55;
+            max-height: 430px;
+            overflow: auto;
+            background: rgba(2, 6, 23, 0.55);
+            border: 1px solid var(--line);
+            border-radius: var(--radius-md);
+            padding: 18px;
+        }
+
+        .footer {
+            margin-top: 28px;
+            text-align: center;
+            color: var(--text-muted);
+            font-size: 13px;
+            line-height: 1.6;
+        }
+
+        @media (max-width: 1100px) {
+            .dashboard-header {
+                grid-template-columns: 1fr;
+            }
+
+            .span-3,
+            .span-4,
+            .span-5,
+            .span-7,
+            .span-8,
+            .span-12 {
+                grid-column: span 12;
+            }
+
+            .system-pipeline {
+                grid-template-columns: repeat(2, 1fr);
+            }
+
+            .chat-form {
+                grid-template-columns: 1fr;
+            }
+        }
+
+        @media (max-width: 640px) {
+            .dashboard-shell {
+                width: min(100% - 24px, 1560px);
+                padding-top: 18px;
+            }
+
+            .hero-panel,
+            .status-panel,
+            .panel {
+                padding: 20px;
+                border-radius: 22px;
+            }
+
+            .system-pipeline,
+            .metric-grid {
+                grid-template-columns: 1fr;
+            }
+
+            .bubble {
+                max-width: 94%;
+            }
+        }
+    </style>
+</head>
+
+<body>
+    <!-- ========================================================
+    SECTION 03 - DASHBOARD SHELL
+    ========================================================= -->
+
+    <main class="dashboard-shell">
+        <!-- ====================================================
+        SECTION 04 - HERO / PLATFORM IDENTITY
+        ===================================================== -->
+
+        <section class="dashboard-header">
+            <div class="glass-panel hero-panel">
+                <div class="eyebrow">Aussem1 Live Intelligence Platform</div>
+                <h1>One Address.<br />Unlimited Intelligence.</h1>
+                <p class="hero-copy">
+                    Aussem1 is now a live, working real estate AI platform. This dashboard
+                    demonstrates the deployed chatbot, memory system, training logger,
+                    prompt architecture, and property intelligence foundation in an
+                    actual browser interface.
+                </p>
+
+                <div class="hero-actions">
+                    <a class="button-link button-primary" href="#live-chat">Open Chat Console</a>
+                    <a class="button-link button-secondary" href="/routes" target="_blank">View API Routes</a>
+                    <a class="button-link button-secondary" href="/health" target="_blank">Health Check</a>
+                </div>
+            </div>
+
+            <aside class="glass-panel status-panel">
+                <div>
+                    <div class="live-pill">
+                        <span class="pulse-dot"></span>
+                        LIVE ON RENDER
+                    </div>
+                    <p class="deployment-label">
+                        FastAPI is online. The dashboard is connected to backend endpoints
+                        that expose chatbot responses, memory analytics, training status,
+                        and system diagnostics.
+                    </p>
+                </div>
+
+                <div class="tag-wrap">
+                    <span class="tag green">API Online</span>
+                    <span class="tag blue">Chat Active</span>
+                    <span class="tag purple">Memory Active</span>
+                    <span class="tag yellow">Training Active</span>
+                </div>
+            </aside>
+        </section>
+
+        <!-- ====================================================
+        SECTION 05 - SYSTEM PIPELINE
+        ===================================================== -->
+
+        <section class="panel span-12" style="margin-bottom:22px;">
+            <div class="panel-title">
+                <h2>Aussem1 Intelligence Pipeline</h2>
+                <span class="subtle">Live architecture demonstration</span>
+            </div>
+
+            <div class="system-pipeline">
+                <div class="pipeline-step">
+                    <div class="pipeline-number">1</div>
+                    <h4>User Question</h4>
+                    <p>A user asks about property value, status, public records, comps, or market intelligence.</p>
+                </div>
+
+                <div class="pipeline-step">
+                    <div class="pipeline-number">2</div>
+                    <h4>Chat Engine</h4>
+                    <p>The request is routed into Aussem1's chatbot orchestration layer.</p>
+                </div>
+
+                <div class="pipeline-step">
+                    <div class="pipeline-number">3</div>
+                    <h4>Prompt System</h4>
+                    <p>The answer follows strict source-aware real estate AI behavior rules.</p>
+                </div>
+
+                <div class="pipeline-step">
+                    <div class="pipeline-number">4</div>
+                    <h4>Memory Store</h4>
+                    <p>The conversation and property context are saved for continuity.</p>
+                </div>
+
+                <div class="pipeline-step">
+                    <div class="pipeline-number">5</div>
+                    <h4>Training Logger</h4>
+                    <p>Questions, confidence, missing data, and failures become training signals.</p>
+                </div>
+
+                <div class="pipeline-step">
+                    <div class="pipeline-number">6</div>
+                    <h4>AI Improvement</h4>
+                    <p>Future review, learning, valuation, and public-record systems build from this layer.</p>
+                </div>
+            </div>
+        </section>
+
+        <!-- ====================================================
+        SECTION 06 - MAIN GRID
+        ===================================================== -->
+
+        <section class="dashboard-grid">
+            <!-- ================================================
+            SECTION 06.01 - LIVE CHAT
+            ================================================= -->
+
+            <div class="panel span-7" id="live-chat">
+                <div class="panel-title">
+                    <h2>Live AI Chat Console</h2>
+                    <span class="subtle" id="sessionId">Session: new</span>
+                </div>
+
+                <div class="chat-layout">
+                    <div class="chat-stream" id="chatStream">
+                        <div class="message assistant">
+                            <div class="bubble">
+Welcome to Aussem1.
+
+Ask a question such as:
+• What is this property worth?
+• Is this home active or sold?
+• What public records would matter?
+• What comparable homes should be reviewed?
+                            </div>
+                        </div>
+                    </div>
+
+                    <form class="chat-form" id="chatForm">
+                        <input id="propertyAddress" placeholder="Optional property address" />
+                        <input id="messageInput" placeholder="Ask Aussem1 a real estate question..." required />
+                        <button class="button-primary" type="submit">Analyze</button>
+                    </form>
+                </div>
+            </div>
+
+            <!-- ================================================
+            SECTION 06.02 - SYSTEM METRICS
+            ================================================= -->
+
+            <div class="panel span-5">
+                <div class="panel-title">
+                    <h2>Live System Metrics</h2>
+                    <span class="subtle" id="lastUpdated">Loading...</span>
+                </div>
+
+                <div class="metric-grid">
+                    <div class="metric-card">
+                        <div class="metric-label">Memory Messages</div>
+                        <div class="metric-value" id="metricMessages">0</div>
+                        <div class="metric-caption">Conversation records stored.</div>
+                    </div>
+
+                    <div class="metric-card">
+                        <div class="metric-label">Sessions</div>
+                        <div class="metric-value" id="metricSessions">0</div>
+                        <div class="metric-caption">Unique chat sessions tracked.</div>
+                    </div>
+
+                    <div class="metric-card">
+                        <div class="metric-label">Training Records</div>
+                        <div class="metric-value" id="metricTraining">0</div>
+                        <div class="metric-caption">Interactions available for review.</div>
+                    </div>
+
+                    <div class="metric-card">
+                        <div class="metric-label">Review Queue</div>
+                        <div class="metric-value" id="metricReview">0</div>
+                        <div class="metric-caption">Low-confidence or incomplete answers.</div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- ================================================
+            SECTION 06.03 - ACTIVE MODULES
+            ================================================= -->
+
+            <div class="panel span-4">
+                <div class="panel-title">
+                    <h3>Active Modules</h3>
+                </div>
+
+                <div class="module-grid">
+                    <div class="module-card">
+                        <strong>FastAPI Runtime</strong>
+                        Serving the live Aussem1 backend through Render.
+                    </div>
+
+                    <div class="module-card">
+                        <strong>Chat Engine</strong>
+                        Accepts user questions and returns structured AI responses.
+                    </div>
+
+                    <div class="module-card">
+                        <strong>Memory Store</strong>
+                        Tracks messages, sessions, properties, context, and future RAG memory.
+                    </div>
+
+                    <div class="module-card">
+                        <strong>Training Logger</strong>
+                        Converts every interaction into supervised learning data.
+                    </div>
+                </div>
+            </div>
+
+            <!-- ================================================
+            SECTION 06.04 - TRAINING INTELLIGENCE
+            ================================================= -->
+
+            <div class="panel span-4">
+                <div class="panel-title">
+                    <h3>Training Intelligence</h3>
+                </div>
+
+                <div class="module-grid" id="trainingPanel">
+                    <div class="log-item">Loading training intelligence...</div>
+                </div>
+            </div>
+
+            <!-- ================================================
+            SECTION 06.05 - MEMORY INTELLIGENCE
+            ================================================= -->
+
+            <div class="panel span-4">
+                <div class="panel-title">
+                    <h3>Memory Intelligence</h3>
+                </div>
+
+                <div class="module-grid" id="memoryPanel">
+                    <div class="log-item">Loading memory intelligence...</div>
+                </div>
+            </div>
+
+            <!-- ================================================
+            SECTION 06.06 - PROPERTY INTELLIGENCE FOUNDATION
+            ================================================= -->
+
+            <div class="panel span-12">
+                <div class="panel-title">
+                    <h2>Property Intelligence Foundation</h2>
+                    <span class="subtle">Planned analysis capabilities</span>
+                </div>
+
+                <div class="tag-wrap">
+                    <span class="tag blue">Property Status</span>
+                    <span class="tag blue">Estimated Value</span>
+                    <span class="tag blue">Comparable Homes</span>
+                    <span class="tag blue">Public Records</span>
+                    <span class="tag blue">Tax Records</span>
+                    <span class="tag blue">Sale History</span>
+                    <span class="tag blue">Market Intelligence</span>
+                    <span class="tag blue">Investment Analysis</span>
+                    <span class="tag blue">Confidence Scoring</span>
+                </div>
+            </div>
+
+            <!-- ================================================
+            SECTION 06.07 - LIVE SYSTEM PAYLOAD
+            ================================================= -->
+
+            <div class="panel span-12">
+                <div class="panel-title">
+                    <h2>Live System Payload</h2>
+                    <span class="subtle">Diagnostic JSON from backend</span>
+                </div>
+
+                <pre class="json-panel" id="rawPayload">Loading...</pre>
+            </div>
+        </section>
+
+        <!-- ====================================================
+        SECTION 07 - FOOTER
+        ===================================================== -->
+
+        <footer class="footer">
+            Aussem1 · Enterprise Real Estate Intelligence Platform · Phase 1.00 Part 9.01<br />
+            Built to evolve from chatbot foundation into property intelligence, public records, comparables, valuation, and supervised AI learning.
+        </footer>
+    </main>
+
+    <!-- ========================================================
+    SECTION 08 - DASHBOARD JAVASCRIPT
+    NOTE:
+    Temporarily embedded for Phase 1. Next phase moves this to:
+    app/static/js/dashboard.js
+    ========================================================= -->
+
+    <script>
+        let currentSessionId = null;
+
+        const chatStream = document.getElementById("chatStream");
+        const chatForm = document.getElementById("chatForm");
+        const messageInput = document.getElementById("messageInput");
+        const propertyAddressInput = document.getElementById("propertyAddress");
+        const sessionIdLabel = document.getElementById("sessionId");
+
+        function addMessage(role, text) {
+            const wrapper = document.createElement("div");
+            wrapper.className = `message ${role}`;
+
+            const bubble = document.createElement("div");
+            bubble.className = "bubble";
+            bubble.textContent = text;
+
+            wrapper.appendChild(bubble);
+            chatStream.appendChild(wrapper);
+            chatStream.scrollTop = chatStream.scrollHeight;
+        }
+
+        function safeNumber(value) {
+            if (value === undefined || value === null) {
+                return 0;
+            }
+
+            return value;
+        }
+
+        async function refreshDashboard() {
+            try {
+                const response = await fetch("/api/dashboard/status");
+                const data = await response.json();
+
+                document.getElementById("rawPayload").textContent =
+                    JSON.stringify(data, null, 2);
+
+                const memory = data.systems?.memory_store?.health || {};
+                const training = data.systems?.training_logger || {};
+
+                document.getElementById("metricMessages").textContent =
+                    safeNumber(memory.total_messages);
+
+                document.getElementById("metricSessions").textContent =
+                    safeNumber(memory.total_sessions);
+
+                document.getElementById("metricTraining").textContent =
+                    safeNumber(training.total_interactions);
+
+                document.getElementById("metricReview").textContent =
+                    safeNumber(training.review_queue_size);
+
+                document.getElementById("lastUpdated").textContent =
+                    new Date().toLocaleTimeString();
+
+                document.getElementById("trainingPanel").innerHTML = `
+                    <div class="log-item">Total interactions: ${safeNumber(training.total_interactions)}</div>
+                    <div class="log-item">Failed interactions: ${safeNumber(training.failed_interactions)}</div>
+                    <div class="log-item">Average confidence: ${safeNumber(training.average_confidence)}</div>
+                    <div class="log-item">Review queue size: ${safeNumber(training.review_queue_size)}</div>
+                `;
+
+                document.getElementById("memoryPanel").innerHTML = `
+                    <div class="log-item">Total messages: ${safeNumber(memory.total_messages)}</div>
+                    <div class="log-item">Total sessions: ${safeNumber(memory.total_sessions)}</div>
+                    <div class="log-item">Total properties: ${safeNumber(memory.total_properties)}</div>
+                    <div class="log-item">Knowledge items: ${safeNumber(memory.total_knowledge_items)}</div>
+                `;
+            } catch (error) {
+                document.getElementById("rawPayload").textContent =
+                    "Dashboard refresh failed: " + error;
+            }
+        }
+
+        chatForm.addEventListener("submit", async (event) => {
+            event.preventDefault();
+
+            const message = messageInput.value.trim();
+            const propertyAddress = propertyAddressInput.value.trim();
+
+            if (!message) {
+                return;
+            }
+
+            addMessage("user", message);
+            messageInput.value = "";
+
+            try {
+                const response = await fetch("/chat", {
+                    method: "POST",
+                    headers: {
+                        "Content-Type": "application/json"
+                    },
+                    body: JSON.stringify({
+                        message: message,
+                        property_address: propertyAddress || null,
+                        session_id: currentSessionId,
+                        user_id: "dashboard-user"
+                    })
+                });
+
+                const data = await response.json();
+
+                currentSessionId = data.session_id || currentSessionId;
+
+                if (currentSessionId) {
+                    sessionIdLabel.textContent = "Session: " + currentSessionId;
+                }
+
+                const answer = data.response || JSON.stringify(data, null, 2);
+
+                addMessage("assistant", answer);
+
+                await refreshDashboard();
+            } catch (error) {
+                addMessage("assistant", "Chat request failed: " + error);
+            }
+        });
+
+        refreshDashboard();
+        setInterval(refreshDashboard, 10000);
+    </script>
+</body>
+</html>
