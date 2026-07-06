@@ -1,12 +1,13 @@
 # ============================================================
 # AUSSEM1
-# PHASE 1.00 PART 9.03
-# ENTERPRISE WEB EXPERIENCE AND API CONTROL ROUTER
+# PHASE 1.00 PART 9.09
+# ENTERPRISE WEB ROUTER STABILIZATION UPGRADE
 # FILE: app/web/routes.py
 # PURPOSE:
-# Serve the Aussem1 visual intelligence dashboard and expose the
-# API control layer for chatbot, memory, training, diagnostics,
-# prompt validation, and future property intelligence systems.
+# Stable production-ready web routing layer for Aussem1 dashboard,
+# chatbot API, dashboard metrics, memory inspection, training
+# intelligence, prompt validation, property preview contracts,
+# and deployment diagnostics.
 #
 # AUTHOR:
 # Ryan Schuren
@@ -15,7 +16,7 @@
 # Alfred
 #
 # STATUS:
-# ENTERPRISE VISUAL APPLICATION ACTIVE
+# ENTERPRISE DASHBOARD ROUTER ACTIVE
 # ============================================================
 
 
@@ -53,18 +54,18 @@ except Exception:
 # SECTION 02 - ROUTER METADATA
 # ============================================================
 
-ROUTES_NAME = "Aussem1 Enterprise Web Experience Router"
+ROUTES_NAME = "Aussem1 Enterprise Web Router"
 
-ROUTES_VERSION = "0.4.0"
+ROUTES_VERSION = "0.5.0"
 
-ROUTES_PHASE = "PHASE 1.00 PART 9.03"
+ROUTES_PHASE = "PHASE 1.00 PART 9.09"
 
-ROUTES_STATUS = "enterprise_visual_application_active"
+ROUTES_STATUS = "enterprise_dashboard_router_active"
 
 ROUTES_DESCRIPTION = (
-    "Enterprise routing layer for Aussem1 dashboard, chatbot API, "
-    "training intelligence, memory intelligence, diagnostics, and "
-    "future property intelligence workflows."
+    "Stable routing layer for dashboard rendering, chatbot API, "
+    "memory analytics, training intelligence, prompt validation, "
+    "property preview contracts, and deployment diagnostics."
 )
 
 
@@ -78,11 +79,23 @@ APP_DIRECTORY = PROJECT_ROOT / "app"
 
 TEMPLATE_DIRECTORY = APP_DIRECTORY / "templates"
 
+STATIC_DIRECTORY = APP_DIRECTORY / "static"
+
+STATIC_CSS_DIRECTORY = STATIC_DIRECTORY / "css"
+
+STATIC_JS_DIRECTORY = STATIC_DIRECTORY / "js"
+
 DATA_DIRECTORY = APP_DIRECTORY / "data"
+
+DASHBOARD_TEMPLATE_FILE = TEMPLATE_DIRECTORY / "dashboard.html"
+
+DASHBOARD_CSS_FILE = STATIC_CSS_DIRECTORY / "dashboard.css"
+
+DASHBOARD_JS_FILE = STATIC_JS_DIRECTORY / "dashboard.js"
 
 
 # ============================================================
-# SECTION 04 - TEMPLATE ENGINE CONFIGURATION
+# SECTION 04 - TEMPLATE CONFIGURATION
 # ============================================================
 
 templates = Jinja2Templates(
@@ -98,7 +111,7 @@ router = APIRouter()
 
 
 # ============================================================
-# SECTION 06 - CHATBOT ENGINE INSTANCE
+# SECTION 06 - ENGINE INSTANCE
 # ============================================================
 
 chat_engine = ChatEngine()
@@ -137,7 +150,7 @@ class ChatRequestBody(BaseModel):
 
 class FeedbackRequestBody(BaseModel):
     """
-    Request body for user feedback on chatbot output.
+    Request body for future user feedback capture.
     """
 
     record_id: str
@@ -159,10 +172,10 @@ class MemorySearchRequestBody(BaseModel):
 
 class PropertyPreviewRequestBody(BaseModel):
     """
-    Early property intelligence preview body.
+    Early property intelligence preview request.
 
     This does not perform live public-record lookup yet.
-    It prepares the route contract for future property engines.
+    It defines the stable route contract for future property engines.
     """
 
     property_address: str
@@ -171,7 +184,7 @@ class PropertyPreviewRequestBody(BaseModel):
 
 
 # ============================================================
-# SECTION 08 - RESPONSE ENVELOPE UTILITIES
+# SECTION 08 - UTILITY FUNCTIONS
 # ============================================================
 
 def utc_now() -> str:
@@ -184,7 +197,7 @@ def utc_now() -> str:
 
 def request_id() -> str:
     """
-    Create request trace identifier.
+    Create a request trace identifier.
     """
 
     return f"aussem1-request-{uuid4()}"
@@ -192,7 +205,7 @@ def request_id() -> str:
 
 def serialize_response(value: Any) -> Any:
     """
-    Convert dataclass objects to dictionaries.
+    Convert dataclass responses to dictionaries.
     """
 
     if is_dataclass(value):
@@ -201,15 +214,33 @@ def serialize_response(value: Any) -> Any:
     return value
 
 
+def safe_call(
+    callable_object: Any,
+    fallback: Any,
+) -> Any:
+    """
+    Safely call subsystem methods while modules evolve.
+    """
+
+    try:
+        return callable_object()
+    except Exception as error:
+        return {
+            "status": "unavailable",
+            "error": str(error),
+            "fallback": fallback,
+        }
+
+
 def enterprise_response(
     *,
     module: str,
     status: str,
     data: Any,
     message: str | None = None,
-) -> dict:
+) -> dict[str, Any]:
     """
-    Standard API response envelope.
+    Standard enterprise API response envelope.
     """
 
     return {
@@ -229,163 +260,18 @@ def enterprise_response(
     }
 
 
-def safe_call(
-    callable_object: Any,
-    fallback: Any,
-) -> Any:
+def dashboard_status_payload() -> dict[str, Any]:
     """
-    Call evolving subsystem methods safely.
-    """
+    Build dashboard status payload in a JavaScript-compatible shape.
 
-    try:
-        return callable_object()
-    except Exception as error:
-        return {
-            "status": "unavailable",
-            "error": str(error),
-            "fallback": fallback,
-        }
+    Important:
+    The dashboard template currently expects:
+        data.systems.memory_store.health
+        data.systems.training_logger
+        data.systems.chat_engine
 
-
-# ============================================================
-# SECTION 09 - VISUAL ROUTES
-# ============================================================
-
-@router.get("/dashboard", response_class=HTMLResponse)
-def dashboard(
-    request: Request,
-) -> HTMLResponse:
-    """
-    Render the Aussem1 live intelligence dashboard.
-    """
-
-    return templates.TemplateResponse(
-        "dashboard.html",
-        {
-            "request": request,
-            "platform_name": "Aussem1",
-            "routes_name": ROUTES_NAME,
-            "routes_version": ROUTES_VERSION,
-            "routes_phase": ROUTES_PHASE,
-            "routes_status": ROUTES_STATUS,
-            "generated_at": utc_now(),
-        },
-    )
-
-
-# ============================================================
-# SECTION 10 - WEB HEALTH ENDPOINTS
-# ============================================================
-
-@router.get("/web/health")
-def web_health() -> dict:
-    """
-    Web routing health check.
-    """
-
-    return enterprise_response(
-        module="web_routes",
-        status="ok",
-        message="Aussem1 web routing layer is active.",
-        data={
-            "routes_name": ROUTES_NAME,
-            "version": ROUTES_VERSION,
-            "phase": ROUTES_PHASE,
-            "template_directory": str(TEMPLATE_DIRECTORY),
-            "template_directory_exists": TEMPLATE_DIRECTORY.exists(),
-            "dashboard_template_exists": (
-                TEMPLATE_DIRECTORY / "dashboard.html"
-            ).exists(),
-        },
-    )
-
-
-@router.get("/web/readiness")
-def web_readiness() -> dict:
-    """
-    Readiness check for dashboard operation.
-    """
-
-    checks = {
-        "template_directory": TEMPLATE_DIRECTORY.exists(),
-        "dashboard_template": (TEMPLATE_DIRECTORY / "dashboard.html").exists(),
-        "data_directory": DATA_DIRECTORY.exists(),
-        "chat_engine": chat_engine is not None,
-        "memory_store": hasattr(chat_engine, "memory_store"),
-        "training_logger": hasattr(chat_engine, "training_logger"),
-    }
-
-    ready = all(checks.values())
-
-    return enterprise_response(
-        module="web_readiness",
-        status="ready" if ready else "not_ready",
-        message="Dashboard readiness inspection complete.",
-        data={
-            "ready": ready,
-            "checks": checks,
-        },
-    )
-
-
-# ============================================================
-# SECTION 11 - DASHBOARD BOOTSTRAP API
-# ============================================================
-
-@router.get("/api/dashboard/bootstrap")
-def dashboard_bootstrap() -> dict:
-    """
-    Return initial dashboard configuration.
-    """
-
-    return enterprise_response(
-        module="dashboard_bootstrap",
-        status="active",
-        message="Dashboard bootstrap data loaded.",
-        data={
-            "dashboard": {
-                "name": "Aussem1 Intelligence Dashboard",
-                "status": "active",
-                "template": "app/templates/dashboard.html",
-                "purpose": (
-                    "Visualize the live chatbot, memory system, training "
-                    "logger, prompt architecture, and property intelligence "
-                    "foundation."
-                ),
-            },
-            "active_modules": [
-                "FastAPI Runtime",
-                "Dashboard Template",
-                "Chat Engine",
-                "Memory Store",
-                "Training Logger",
-                "Prompt Registry",
-                "Property Knowledge Foundation",
-                "Render Deployment",
-            ],
-            "planned_modules": [
-                "Dashboard CSS Split",
-                "Dashboard JavaScript Split",
-                "Property Lookup Engine",
-                "Public Records Engine",
-                "Comparable Analysis Engine",
-                "Valuation Engine",
-                "Learning Engine",
-                "PostgreSQL Persistence",
-                "Review Dashboard",
-            ],
-        },
-    )
-
-
-# ============================================================
-# SECTION 12 - DASHBOARD LIVE STATUS API
-# ============================================================
-
-@router.get("/api/dashboard/status")
-def dashboard_status() -> dict:
-    """
-    Return live platform status for visual dashboard.
+    Therefore this route returns systems at the top level, not only
+    inside a nested enterprise envelope.
     """
 
     training_summary = safe_call(
@@ -408,42 +294,214 @@ def dashboard_status() -> dict:
         if validate_prompts
         else {
             "status": "unavailable",
-            "reason": "validate_prompts not importable",
+            "reason": "validate_prompts could not be imported",
         }
     )
 
-    return enterprise_response(
-        module="dashboard_status",
-        status="online",
-        message="Live Aussem1 dashboard status loaded.",
-        data={
-            "systems": {
-                "web_routes": {
-                    "status": "active",
-                    "version": ROUTES_VERSION,
-                    "phase": ROUTES_PHASE,
-                    "dashboard": "active",
-                },
-                "chat_engine": engine_status,
-                "training_logger": training_summary,
-                "memory_store": memory_health,
-                "prompt_registry": prompt_status,
+    return {
+        "platform": "Aussem1",
+        "module": "dashboard_status",
+        "status": "online",
+        "phase": ROUTES_PHASE,
+        "timestamp": utc_now(),
+        "systems": {
+            "web_routes": {
+                "status": "active",
+                "name": ROUTES_NAME,
+                "version": ROUTES_VERSION,
+                "phase": ROUTES_PHASE,
+                "dashboard_template_exists": DASHBOARD_TEMPLATE_FILE.exists(),
+                "dashboard_css_exists": DASHBOARD_CSS_FILE.exists(),
+                "dashboard_js_exists": DASHBOARD_JS_FILE.exists(),
             },
-            "visual_layers": {
-                "template": "active",
-                "css": "embedded_or_pending_static_split",
-                "javascript": "embedded_or_pending_static_split",
+            "chat_engine": engine_status,
+            "training_logger": training_summary,
+            "memory_store": {
+                "status": "active",
+                "health": memory_health,
             },
+            "prompt_registry": prompt_status,
+        },
+        "visual_layers": {
+            "template": {
+                "path": str(DASHBOARD_TEMPLATE_FILE),
+                "exists": DASHBOARD_TEMPLATE_FILE.exists(),
+            },
+            "css": {
+                "path": str(DASHBOARD_CSS_FILE),
+                "url": "/static/css/dashboard.css",
+                "exists": DASHBOARD_CSS_FILE.exists(),
+            },
+            "javascript": {
+                "path": str(DASHBOARD_JS_FILE),
+                "url": "/static/js/dashboard.js",
+                "exists": DASHBOARD_JS_FILE.exists(),
+            },
+        },
+    }
+
+
+# ============================================================
+# SECTION 09 - VISUAL DASHBOARD ROUTES
+# ============================================================
+
+@router.get("/dashboard", response_class=HTMLResponse)
+def dashboard(
+    request: Request,
+) -> HTMLResponse:
+    """
+    Render the Aussem1 live intelligence dashboard.
+    """
+
+    return templates.TemplateResponse(
+        "dashboard.html",
+        {
+            "request": request,
+            "platform_name": "Aussem1",
+            "routes_name": ROUTES_NAME,
+            "routes_version": ROUTES_VERSION,
+            "routes_phase": ROUTES_PHASE,
+            "routes_status": ROUTES_STATUS,
+            "generated_at": utc_now(),
+            "dashboard_css_url": "/static/css/dashboard.css",
+            "dashboard_js_url": "/static/js/dashboard.js",
         },
     )
 
 
 # ============================================================
-# SECTION 13 - CHAT HEALTH ENDPOINT
+# SECTION 10 - WEB HEALTH AND READINESS
+# ============================================================
+
+@router.get("/web/health")
+def web_health() -> dict[str, Any]:
+    """
+    Web routing health check.
+    """
+
+    return enterprise_response(
+        module="web_routes",
+        status="ok",
+        message="Aussem1 web routing layer is active.",
+        data={
+            "routes_name": ROUTES_NAME,
+            "version": ROUTES_VERSION,
+            "phase": ROUTES_PHASE,
+            "template_directory": str(TEMPLATE_DIRECTORY),
+            "template_directory_exists": TEMPLATE_DIRECTORY.exists(),
+            "dashboard_template_exists": DASHBOARD_TEMPLATE_FILE.exists(),
+            "dashboard_css_exists": DASHBOARD_CSS_FILE.exists(),
+            "dashboard_js_exists": DASHBOARD_JS_FILE.exists(),
+        },
+    )
+
+
+@router.get("/web/readiness")
+def web_readiness() -> dict[str, Any]:
+    """
+    Readiness check for dashboard operation.
+    """
+
+    checks = {
+        "template_directory": TEMPLATE_DIRECTORY.exists(),
+        "dashboard_template": DASHBOARD_TEMPLATE_FILE.exists(),
+        "static_directory": STATIC_DIRECTORY.exists(),
+        "dashboard_css": DASHBOARD_CSS_FILE.exists(),
+        "data_directory": DATA_DIRECTORY.exists(),
+        "chat_engine": chat_engine is not None,
+        "memory_store": hasattr(chat_engine, "memory_store"),
+        "training_logger": hasattr(chat_engine, "training_logger"),
+    }
+
+    ready = all(checks.values())
+
+    return enterprise_response(
+        module="web_readiness",
+        status="ready" if ready else "not_ready",
+        message="Dashboard readiness inspection complete.",
+        data={
+            "ready": ready,
+            "checks": checks,
+        },
+    )
+
+
+# ============================================================
+# SECTION 11 - DASHBOARD APIS
+# ============================================================
+
+@router.get("/api/dashboard/bootstrap")
+def dashboard_bootstrap() -> dict[str, Any]:
+    """
+    Return dashboard bootstrap metadata.
+    """
+
+    return {
+        "platform": "Aussem1",
+        "module": "dashboard_bootstrap",
+        "status": "active",
+        "timestamp": utc_now(),
+        "dashboard": {
+            "name": "Aussem1 Intelligence Dashboard",
+            "status": "active",
+            "template": "app/templates/dashboard.html",
+            "css": "/static/css/dashboard.css",
+            "javascript": "/static/js/dashboard.js",
+            "purpose": (
+                "Visualize the live chatbot, memory system, training logger, "
+                "prompt architecture, property intelligence foundation, and "
+                "future AI learning pipeline."
+            ),
+        },
+        "active_modules": [
+            "FastAPI Runtime",
+            "Dashboard Template",
+            "Static CSS Runtime",
+            "Chat Engine",
+            "Memory Store",
+            "Training Logger",
+            "Prompt Registry",
+            "Property Knowledge Foundation",
+            "Render Deployment",
+        ],
+        "planned_modules": [
+            "Dashboard JavaScript Split",
+            "Property Lookup Engine",
+            "Public Records Engine",
+            "Comparable Analysis Engine",
+            "Valuation Engine",
+            "Learning Engine",
+            "PostgreSQL Persistence",
+            "Review Dashboard",
+            "Machine Learning Operations",
+        ],
+        "routes": {
+            "name": ROUTES_NAME,
+            "version": ROUTES_VERSION,
+            "phase": ROUTES_PHASE,
+            "status": ROUTES_STATUS,
+        },
+    }
+
+
+@router.get("/api/dashboard/status")
+def dashboard_status() -> dict[str, Any]:
+    """
+    Return live dashboard status.
+
+    This intentionally returns the direct shape expected by
+    the browser dashboard JavaScript.
+    """
+
+    return dashboard_status_payload()
+
+
+# ============================================================
+# SECTION 12 - CHATBOT ENDPOINTS
 # ============================================================
 
 @router.get("/chat/health")
-def chat_health() -> dict:
+def chat_health() -> dict[str, Any]:
     """
     Verify chatbot route availability.
     """
@@ -463,14 +521,10 @@ def chat_health() -> dict:
     )
 
 
-# ============================================================
-# SECTION 14 - CHAT ENDPOINT
-# ============================================================
-
 @router.post("/chat")
 def chat(
     request_body: ChatRequestBody,
-) -> dict:
+) -> dict[str, Any]:
     """
     Process a chatbot request through Aussem1.
     """
@@ -486,21 +540,15 @@ def chat(
         request=chat_request,
     )
 
-    serialized = serialize_response(response)
+    return serialize_response(response)
 
-    return serialized
-
-
-# ============================================================
-# SECTION 15 - CHAT TRACE ENDPOINT
-# ============================================================
 
 @router.post("/chat/trace")
 def chat_trace(
     request_body: ChatRequestBody,
-) -> dict:
+) -> dict[str, Any]:
     """
-    Process a chat request and return an enterprise diagnostic trace.
+    Process a chatbot request and return a diagnostic trace.
     """
 
     chat_request = ChatRequest(
@@ -524,22 +572,28 @@ def chat_trace(
             "request": request_body.model_dump(),
             "response": serialized,
             "trace": {
-                "memory_enabled": True,
-                "training_enabled": True,
-                "property_context_enabled": True,
-                "confidence_enabled": "confidence" in serialized,
-                "intent_enabled": "intent" in serialized,
+                "memory_enabled": hasattr(chat_engine, "memory_store"),
+                "training_enabled": hasattr(chat_engine, "training_logger"),
+                "property_context_enabled": bool(request_body.property_address),
+                "confidence_enabled": (
+                    isinstance(serialized, dict)
+                    and "confidence" in serialized
+                ),
+                "intent_enabled": (
+                    isinstance(serialized, dict)
+                    and "intent" in serialized
+                ),
             },
         },
     )
 
 
 # ============================================================
-# SECTION 16 - TRAINING STATUS ENDPOINTS
+# SECTION 13 - TRAINING ENDPOINTS
 # ============================================================
 
 @router.get("/chat/training-status")
-def training_status() -> dict:
+def training_status() -> dict[str, Any]:
     """
     Return chatbot training data status.
     """
@@ -555,15 +609,24 @@ def training_status() -> dict:
         message="Training logger status loaded.",
         data={
             "summary": summary,
-            "total_interactions": chat_engine.training_logger.total_interactions(),
-            "failed_interactions": chat_engine.training_logger.failed_interactions(),
-            "unanswered_questions": chat_engine.training_logger.unanswered_questions(),
+            "total_interactions": safe_call(
+                chat_engine.training_logger.total_interactions,
+                fallback=0,
+            ),
+            "failed_interactions": safe_call(
+                chat_engine.training_logger.failed_interactions,
+                fallback=0,
+            ),
+            "unanswered_questions": safe_call(
+                chat_engine.training_logger.unanswered_questions,
+                fallback=[],
+            ),
         },
     )
 
 
 @router.get("/chat/review-queue")
-def training_review_queue() -> dict:
+def training_review_queue() -> dict[str, Any]:
     """
     Return training review queue.
     """
@@ -585,7 +648,7 @@ def training_review_queue() -> dict:
 
 
 @router.get("/chat/training-export")
-def training_export() -> dict:
+def training_export() -> dict[str, Any]:
     """
     Export current training dataset preview.
     """
@@ -607,11 +670,11 @@ def training_export() -> dict:
 
 
 # ============================================================
-# SECTION 17 - MEMORY ENDPOINTS
+# SECTION 14 - MEMORY ENDPOINTS
 # ============================================================
 
 @router.get("/chat/memory-status")
-def memory_status() -> dict:
+def memory_status() -> dict[str, Any]:
     """
     Return chatbot memory status.
     """
@@ -627,8 +690,14 @@ def memory_status() -> dict:
         message="Memory store status loaded.",
         data={
             "health": memory_health,
-            "total_messages": chat_engine.memory_store.total_messages(),
-            "total_sessions": chat_engine.memory_store.total_sessions(),
+            "total_messages": safe_call(
+                chat_engine.memory_store.total_messages,
+                fallback=0,
+            ),
+            "total_sessions": safe_call(
+                chat_engine.memory_store.total_sessions,
+                fallback=0,
+            ),
         },
     )
 
@@ -637,7 +706,7 @@ def memory_status() -> dict:
 def memory_search(
     query: str,
     limit: int = 20,
-) -> dict:
+) -> dict[str, Any]:
     """
     Search chatbot memory by query.
     """
@@ -666,7 +735,7 @@ def memory_search(
 @router.post("/chat/memory-search")
 def memory_search_post(
     request_body: MemorySearchRequestBody,
-) -> dict:
+) -> dict[str, Any]:
     """
     POST variant of memory search.
     """
@@ -678,11 +747,11 @@ def memory_search_post(
 
 
 # ============================================================
-# SECTION 18 - PROMPT STATUS ENDPOINT
+# SECTION 15 - PROMPT ENDPOINTS
 # ============================================================
 
 @router.get("/chat/prompt-status")
-def prompt_status() -> dict:
+def prompt_status() -> dict[str, Any]:
     """
     Return prompt registry validation status.
     """
@@ -705,18 +774,19 @@ def prompt_status() -> dict:
 
 
 # ============================================================
-# SECTION 19 - PROPERTY INTELLIGENCE PREVIEW
+# SECTION 16 - PROPERTY PREVIEW ENDPOINT
 # ============================================================
 
 @router.post("/properties/preview")
 def property_preview(
     request_body: PropertyPreviewRequestBody,
-) -> dict:
+) -> dict[str, Any]:
     """
     Preview the future property intelligence flow.
 
-    This does not claim live public-record, MLS, or valuation access.
-    It demonstrates the future routing contract.
+    This does not claim live public-record, MLS, valuation, or
+    comparable access. It demonstrates the route contract and
+    expected future analysis pipeline.
     """
 
     return enterprise_response(
@@ -745,6 +815,7 @@ def property_preview(
                 "Memory logging",
                 "Training logging",
                 "Missing data detection",
+                "Prompt governance",
                 "Dashboard visualization",
             ],
             "not_yet_connected": [
@@ -760,11 +831,11 @@ def property_preview(
 
 
 # ============================================================
-# SECTION 20 - ENTERPRISE ROUTE REGISTRY
+# SECTION 17 - ROUTE REGISTRY
 # ============================================================
 
 @router.get("/web/route-registry")
-def web_route_registry() -> dict:
+def web_route_registry() -> dict[str, Any]:
     """
     Return enterprise route registry for this web module.
     """
@@ -801,51 +872,56 @@ def web_route_registry() -> dict:
                 "/properties/preview",
             ],
             "governance": {
-                "rule_1": "Routes should stay thin and delegate intelligence to service modules.",
+                "rule_1": "Routes stay thin and delegate intelligence to service modules.",
                 "rule_2": "Visual structure belongs in templates.",
-                "rule_3": "CSS belongs in static stylesheets after the split.",
-                "rule_4": "JavaScript belongs in static scripts after the split.",
+                "rule_3": "CSS belongs in static stylesheets.",
+                "rule_4": "JavaScript belongs in static scripts.",
                 "rule_5": "AI endpoints must expose uncertainty and source status.",
+                "rule_6": "Dashboard status must remain compatible with frontend JavaScript.",
             },
         },
     )
 
 
 # ============================================================
-# SECTION 21 - ENTERPRISE DIAGNOSTICS
+# SECTION 18 - DIAGNOSTICS
 # ============================================================
 
 @router.get("/web/diagnostics")
-def web_diagnostics() -> dict:
+def web_diagnostics() -> dict[str, Any]:
     """
-    Return complete diagnostic state for early deployment debugging.
+    Return complete web diagnostic state.
     """
-
-    files = {
-        "project_root": str(PROJECT_ROOT),
-        "app_directory": str(APP_DIRECTORY),
-        "template_directory": str(TEMPLATE_DIRECTORY),
-        "data_directory": str(DATA_DIRECTORY),
-        "dashboard_template": str(TEMPLATE_DIRECTORY / "dashboard.html"),
-    }
-
-    existence = {
-        "project_root_exists": PROJECT_ROOT.exists(),
-        "app_directory_exists": APP_DIRECTORY.exists(),
-        "template_directory_exists": TEMPLATE_DIRECTORY.exists(),
-        "data_directory_exists": DATA_DIRECTORY.exists(),
-        "dashboard_template_exists": (
-            TEMPLATE_DIRECTORY / "dashboard.html"
-        ).exists(),
-    }
 
     return enterprise_response(
         module="web_diagnostics",
         status="active",
         message="Web diagnostics loaded.",
         data={
-            "paths": files,
-            "existence": existence,
+            "paths": {
+                "project_root": str(PROJECT_ROOT),
+                "app_directory": str(APP_DIRECTORY),
+                "template_directory": str(TEMPLATE_DIRECTORY),
+                "static_directory": str(STATIC_DIRECTORY),
+                "static_css_directory": str(STATIC_CSS_DIRECTORY),
+                "static_js_directory": str(STATIC_JS_DIRECTORY),
+                "data_directory": str(DATA_DIRECTORY),
+                "dashboard_template": str(DASHBOARD_TEMPLATE_FILE),
+                "dashboard_css": str(DASHBOARD_CSS_FILE),
+                "dashboard_js": str(DASHBOARD_JS_FILE),
+            },
+            "exists": {
+                "project_root": PROJECT_ROOT.exists(),
+                "app_directory": APP_DIRECTORY.exists(),
+                "template_directory": TEMPLATE_DIRECTORY.exists(),
+                "static_directory": STATIC_DIRECTORY.exists(),
+                "static_css_directory": STATIC_CSS_DIRECTORY.exists(),
+                "static_js_directory": STATIC_JS_DIRECTORY.exists(),
+                "data_directory": DATA_DIRECTORY.exists(),
+                "dashboard_template": DASHBOARD_TEMPLATE_FILE.exists(),
+                "dashboard_css": DASHBOARD_CSS_FILE.exists(),
+                "dashboard_js": DASHBOARD_JS_FILE.exists(),
+            },
             "routes_version": ROUTES_VERSION,
             "routes_phase": ROUTES_PHASE,
             "routes_status": ROUTES_STATUS,
@@ -854,48 +930,31 @@ def web_diagnostics() -> dict:
 
 
 # ============================================================
-# SECTION 22 - FUTURE EXPANSION NOTES
+# SECTION 19 - FUTURE EXPANSION NOTES
 # ============================================================
 
 #
-# Immediate next files:
+# Next correct file:
 #
-# app/static/css/dashboard.css
 # app/static/js/dashboard.js
 #
-# Required future main.py upgrade:
+# Why:
+# The dashboard currently has visual structure and CSS, but its
+# browser behavior should be moved out of dashboard.html into a
+# dedicated JavaScript controller.
 #
-# Mount static files:
+# Future router expansion:
 #
-# from fastapi.staticfiles import StaticFiles
+# - /properties/lookup
+# - /properties/status
+# - /valuation/estimate
+# - /comparables/search
+# - /public-records/search
+# - /market/trends
 #
-# application.mount(
-#     "/static",
-#     StaticFiles(directory="app/static"),
-#     name="static",
-# )
-#
-# This router is now responsible for:
-#
-# • template rendering
-# • dashboard bootstrap APIs
-# • dashboard status APIs
-# • chatbot API
-# • training API
-# • memory API
-# • prompt validation API
-# • property preview API
-# • route registry
-# • diagnostics
-#
-# It is intentionally not responsible for:
-#
-# • CSS implementation
-# • JavaScript behavior
-# • property valuation logic
-# • public-record lookup logic
-# • ML model training
-# • database persistence
+# Rule:
+# This router must never contain valuation algorithms, public-record
+# scraping logic, ML training logic, or frontend styling.
 #
 # ============================================================
 
