@@ -746,21 +746,7 @@ class ChatEngine:
 # SECTION 06.01A - RENDER HEALTH CHECK
 # --------------------------------------------------------
 
-@application.get("/health")
-def render_health() -> dict:
-    """
-    Dedicated Render health endpoint.
 
-    Render can periodically call this endpoint to verify
-    the service is alive without parsing additional metadata.
-    """
-
-    return {
-        "status": "ok",
-        "service": PLATFORM_NAME,
-        "version": PLATFORM_VERSION,
-        "timestamp": datetime.now(UTC).isoformat(),
-    }
 #
 #
 # # ============================================================
