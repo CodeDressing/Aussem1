@@ -346,28 +346,35 @@ def dashboard_status_payload() -> dict[str, Any]:
 # ============================================================
 
 @router.get("/dashboard", response_class=HTMLResponse)
-def dashboard(
-    request: Request,
-) -> HTMLResponse:
+def dashboard() -> HTMLResponse:
     """
-    Render the Aussem1 live intelligence dashboard.
+    Render the Aussem1 dashboard as a static HTML template.
+
+    This avoids Jinja parsing errors from JavaScript/CSS object
+    syntax inside the dashboard template.
     """
 
-    return templates.TemplateResponse(
-        "dashboard.html",
-        {
-            "request": request,
-            "platform_name": "Aussem1",
-            "routes_name": ROUTES_NAME,
-            "routes_version": ROUTES_VERSION,
-            "routes_phase": ROUTES_PHASE,
-            "routes_status": ROUTES_STATUS,
-            "generated_at": utc_now(),
-            "dashboard_css_url": "/static/css/dashboard.css",
-            "dashboard_js_url": "/static/js/dashboard.js",
-        },
+    if not DASHBOARD_TEMPLATE_FILE.exists():
+        return HTMLResponse(
+            content="""
+            <html>
+                <body style="background:#020617;color:white;font-family:system-ui;padding:40px;">
+                    <h1>Aussem1 Dashboard Template Missing</h1>
+                    <p>Expected file: app/templates/dashboard.html</p>
+                </body>
+            </html>
+            """,
+            status_code=500,
+        )
+
+    html = DASHBOARD_TEMPLATE_FILE.read_text(
+        encoding="utf-8",
     )
 
+    return HTMLResponse(
+        content=html,
+        status_code=200,
+    )
 
 # ============================================================
 # SECTION 10 - WEB HEALTH AND READINESS
