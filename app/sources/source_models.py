@@ -1,13 +1,15 @@
 # ============================================================
 # AUSSEM1
-# PHASE 2.10 PART 2.00
-# ENTERPRISE SOURCE MODELS
-# FILE: app/sources/source_models.py
+# PHASE 2.10 PART 3.00
+# ENTERPRISE SOURCE REGISTRY
+# FILE: app/sources/source_registry.py
 # PURPOSE:
-# Define the official source data models used across Aussem1 for
-# public records, tax records, parcel data, clerk records, listing
-# sources, market data, comparable data, valuation inputs, and
-# future machine-learning source attribution.
+# Central registry of official, public, authorized, planned, and
+# future real-estate data sources for Aussem1.
+#
+# This registry is intentionally source-first and real-data-first.
+# It does not contain mock homes, fake property values, fake listing
+# status, fake comparable sales, or invented public records.
 #
 # AUTHOR:
 # Ryan Schuren
@@ -16,7 +18,7 @@
 # Alfred
 #
 # STATUS:
-# REAL DATA SOURCE MODELS ACTIVE
+# REAL DATA SOURCE REGISTRY ACTIVE
 # ============================================================
 
 
@@ -26,274 +28,883 @@
 
 from __future__ import annotations
 
-import hashlib
-import json
-from dataclasses import asdict
-from dataclasses import dataclass
-from dataclasses import field
 from datetime import UTC
 from datetime import datetime
-from enum import StrEnum
 from typing import Any
 
+from app.sources.source_models import SourceAccessMethod
+from app.sources.source_models import SourceAccessPolicy
+from app.sources.source_models import SourceClaimType
+from app.sources.source_models import SourceConnectorCapability
+from app.sources.source_models import SourceDataFormat
+from app.sources.source_models import SourceRegistryEntry
+from app.sources.source_models import SourceReliability
+from app.sources.source_models import SourceRequestPolicy
+from app.sources.source_models import SourceStatus
+from app.sources.source_models import SourceType
+from app.sources.source_models import SourceValidationReport
+from app.sources.source_models import SourceValidationIssue
+from app.sources.source_models import validate_registry_entry
+
 
 # ============================================================
-# SECTION 02 - MODEL VERSION CONFIGURATION
+# SECTION 02 - REGISTRY METADATA
 # ============================================================
 
-SOURCE_MODELS_NAME = "Aussem1 Enterprise Source Models"
+SOURCE_REGISTRY_NAME = "Aussem1 Enterprise Real Data Source Registry"
 
-SOURCE_MODELS_VERSION = "0.1.0"
+SOURCE_REGISTRY_VERSION = "0.1.0"
 
-SOURCE_MODELS_PHASE = "PHASE 2.10 PART 2.00"
+SOURCE_REGISTRY_PHASE = "PHASE 2.10 PART 3.00"
 
-SOURCE_MODELS_STATUS = "real_data_source_models_active"
+SOURCE_REGISTRY_STATUS = "real_data_source_registry_active"
+
+SOURCE_REGISTRY_DESCRIPTION = (
+    "Official registry of source systems used by Aussem1 for "
+    "public records, tax data, parcel data, clerk records, listing "
+    "data, market data, risk data, school data, comparable data, "
+    "and future valuation inputs."
+)
 
 
 # ============================================================
-# SECTION 03 - SOURCE TYPE ENUMERATION
+# SECTION 03 - REGISTRY OPERATING RULES
 # ============================================================
 
-class SourceType(StrEnum):
+REGISTRY_OPERATING_RULES = {
+    "mock_sources_allowed": False,
+    "mock_homes_allowed": False,
+    "fabricated_addresses_allowed": False,
+    "fabricated_property_values_allowed": False,
+    "fabricated_listing_status_allowed": False,
+    "fabricated_comparables_allowed": False,
+    "fabricated_public_records_allowed": False,
+    "official_sources_preferred": True,
+    "authorized_sources_preferred": True,
+    "source_attribution_required": True,
+    "retrieval_timestamp_required": True,
+    "source_status_required": True,
+    "confidence_required": True,
+    "public_records_are_not_listing_status": True,
+    "mls_or_listing_feed_required_for_active_status": True,
+}
+
+
+# ============================================================
+# SECTION 04 - SAFE REQUEST POLICIES
+# ============================================================
+
+PUBLIC_PORTAL_POLICY = SourceRequestPolicy(
+    timeout_seconds=25,
+    max_retries=1,
+    respect_rate_limits=True,
+    user_agent_required=True,
+    uncontrolled_scraping_allowed=False,
+    bypass_access_controls_allowed=False,
+    store_raw_payload=False,
+    manual_review_on_ambiguity=True,
+    notes=[
+        "Use only public pages and lawful access paths.",
+        "Do not bypass controls.",
+        "Do not create high-volume scraping behavior.",
+        "Prefer official APIs or downloadable datasets when available.",
+    ],
+)
+
+
+GIS_SERVICE_POLICY = SourceRequestPolicy(
+    timeout_seconds=30,
+    max_retries=1,
+    respect_rate_limits=True,
+    user_agent_required=True,
+    uncontrolled_scraping_allowed=False,
+    bypass_access_controls_allowed=False,
+    store_raw_payload=False,
+    manual_review_on_ambiguity=True,
+    notes=[
+        "Use official GIS services and public map endpoints only.",
+        "Preserve source attribution and service metadata.",
+        "Do not infer parcel facts without source confidence.",
+    ],
+)
+
+
+DOWNLOADABLE_DATASET_POLICY = SourceRequestPolicy(
+    timeout_seconds=60,
+    max_retries=1,
+    respect_rate_limits=True,
+    user_agent_required=True,
+    uncontrolled_scraping_allowed=False,
+    bypass_access_controls_allowed=False,
+    store_raw_payload=False,
+    manual_review_on_ambiguity=True,
+    notes=[
+        "Use official open-data download endpoints where available.",
+        "Track dataset publication and retrieval dates.",
+        "Normalize fields before property intelligence use.",
+    ],
+)
+
+
+LICENSED_FEED_POLICY = SourceRequestPolicy(
+    timeout_seconds=30,
+    max_retries=1,
+    respect_rate_limits=True,
+    user_agent_required=True,
+    uncontrolled_scraping_allowed=False,
+    bypass_access_controls_allowed=False,
+    store_raw_payload=False,
+    manual_review_on_ambiguity=True,
+    notes=[
+        "Requires license, credentials, or authorized access.",
+        "Do not implement until access agreement is in place.",
+        "Listing status claims require this class of source.",
+    ],
+)
+
+
+# ============================================================
+# SECTION 05 - CAPABILITY HELPERS
+# ============================================================
+
+def capability(
+    claim_type: SourceClaimType,
+    *,
+    supported: bool = True,
+    requires_auth: bool = False,
+    requires_license: bool = False,
+    notes: list[str] | None = None,
+) -> SourceConnectorCapability:
     """
-    High-level source category.
-
-    These categories govern what a source may reasonably support.
-    For example, public records may support tax, parcel, deed,
-    sale-history, or assessment context, but they do not reliably
-    support current active or under-contract listing status.
-    """
-
-    PUBLIC_RECORD = "public_record"
-    COUNTY_ASSESSOR = "county_assessor"
-    COUNTY_CLERK = "county_clerk"
-    COUNTY_RECORDER = "county_recorder"
-    TAX_BOARD = "tax_board"
-    TAX_COLLECTOR = "tax_collector"
-    PARCEL_GIS = "parcel_gis"
-    STATE_PARCEL_DATA = "state_parcel_data"
-    STATE_ASSESSMENT_DATA = "state_assessment_data"
-    MUNICIPAL_RECORD = "municipal_record"
-    SCHOOL_DATA = "school_data"
-    MARKET_DATA = "market_data"
-    RISK_DATA = "risk_data"
-    MLS_RESO = "mls_reso"
-    IDX = "idx"
-    BROKER_FEED = "broker_feed"
-    LISTING_PROVIDER = "listing_provider"
-    USER_PROVIDED = "user_provided"
-    INTERNAL_MEMORY = "internal_memory"
-    INTERNAL_INFERENCE = "internal_inference"
-    MACHINE_LEARNING_MODEL = "machine_learning_model"
-    UNKNOWN = "unknown"
-
-
-# ============================================================
-# SECTION 04 - SOURCE STATUS ENUMERATION
-# ============================================================
-
-class SourceStatus(StrEnum):
-    """
-    Runtime status of a source lookup or source connector.
-    """
-
-    ACTIVE = "active"
-    PLANNED = "planned"
-    CONNECTED = "connected"
-    AVAILABLE = "available"
-    UNAVAILABLE = "unavailable"
-    NOT_IMPLEMENTED = "not_implemented"
-    AUTH_REQUIRED = "auth_required"
-    RATE_LIMITED = "rate_limited"
-    FAILED = "failed"
-    ERROR = "error"
-    EMPTY = "empty"
-    PARTIAL = "partial"
-    STALE = "stale"
-    MANUAL_REVIEW_REQUIRED = "manual_review_required"
-    DISABLED = "disabled"
-
-
-# ============================================================
-# SECTION 05 - SOURCE RELIABILITY ENUMERATION
-# ============================================================
-
-class SourceReliability(StrEnum):
-    """
-    Reliability tier used to rank source trust.
-    """
-
-    OFFICIAL = "official"
-    AUTHORIZED = "authorized"
-    LICENSED = "licensed"
-    USER_PROVIDED = "user_provided"
-    INTERNAL_INFERENCE = "internal_inference"
-    UNVERIFIED = "unverified"
-    UNKNOWN = "unknown"
-
-
-# ============================================================
-# SECTION 06 - SOURCE ACCESS METHOD ENUMERATION
-# ============================================================
-
-class SourceAccessMethod(StrEnum):
-    """
-    How Aussem1 accesses the source.
-    """
-
-    OFFICIAL_API = "official_api"
-    PUBLIC_WEB_PORTAL = "public_web_portal"
-    DOWNLOADABLE_DATASET = "downloadable_dataset"
-    DOCUMENT_SEARCH = "document_search"
-    GIS_SERVICE = "gis_service"
-    MANUAL_ENTRY = "manual_entry"
-    LICENSED_FEED = "licensed_feed"
-    INTERNAL_FILE = "internal_file"
-    FUTURE_CONNECTOR = "future_connector"
-    UNKNOWN = "unknown"
-
-
-# ============================================================
-# SECTION 07 - SOURCE DATA FORMAT ENUMERATION
-# ============================================================
-
-class SourceDataFormat(StrEnum):
-    """
-    Expected data format returned by the source.
-    """
-
-    JSON = "json"
-    HTML = "html"
-    XML = "xml"
-    CSV = "csv"
-    PDF = "pdf"
-    IMAGE = "image"
-    GIS_LAYER = "gis_layer"
-    DOCUMENT = "document"
-    TEXT = "text"
-    MIXED = "mixed"
-    UNKNOWN = "unknown"
-
-
-# ============================================================
-# SECTION 08 - SOURCE CLAIM TYPE ENUMERATION
-# ============================================================
-
-class SourceClaimType(StrEnum):
-    """
-    Claim categories that source records may support.
-    """
-
-    ADDRESS_IDENTITY = "address_identity"
-    PARCEL_IDENTITY = "parcel_identity"
-    TAX_ASSESSMENT = "tax_assessment"
-    PROPERTY_TAX = "property_tax"
-    LAND_VALUE = "land_value"
-    IMPROVEMENT_VALUE = "improvement_value"
-    DEED_REFERENCE = "deed_reference"
-    MORTGAGE_REFERENCE = "mortgage_reference"
-    LIEN_REFERENCE = "lien_reference"
-    SALE_HISTORY = "sale_history"
-    OWNER_REFERENCE = "owner_reference"
-    BUILDING_FACTS = "building_facts"
-    LOT_SIZE = "lot_size"
-    YEAR_BUILT = "year_built"
-    PROPERTY_CLASS = "property_class"
-    MUNICIPALITY = "municipality"
-    COUNTY = "county"
-    SCHOOL_DISTRICT = "school_district"
-    ZONING_CONTEXT = "zoning_context"
-    FLOOD_CONTEXT = "flood_context"
-    ACTIVE_LISTING_STATUS = "active_listing_status"
-    UNDER_CONTRACT_STATUS = "under_contract_status"
-    SOLD_STATUS = "sold_status"
-    LISTING_PRICE = "listing_price"
-    DAYS_ON_MARKET = "days_on_market"
-    COMPARABLE_SALE = "comparable_sale"
-    VALUATION_INPUT = "valuation_input"
-    MARKET_TREND = "market_trend"
-    INTERNAL_REASONING = "internal_reasoning"
-    UNKNOWN = "unknown"
-
-
-# ============================================================
-# SECTION 09 - CONFIDENCE BAND ENUMERATION
-# ============================================================
-
-class SourceConfidenceBand(StrEnum):
-    """
-    Human-readable confidence band.
+    Build a connector capability.
     """
 
-    VERY_HIGH = "very_high"
-    HIGH = "high"
-    MEDIUM = "medium"
-    LOW = "low"
-    VERY_LOW = "very_low"
-    UNKNOWN = "unknown"
+    return SourceConnectorCapability(
+        claim_type=claim_type.value,
+        supported=supported,
+        requires_auth=requires_auth,
+        requires_license=requires_license,
+        notes=notes or [],
+    )
 
 
 # ============================================================
-# SECTION 10 - SOURCE ERROR TYPE ENUMERATION
+# SECTION 06 - NEW JERSEY / MORRIS COUNTY SOURCE ENTRIES
 # ============================================================
 
-class SourceErrorType(StrEnum):
-    """
-    Standard source error categories.
-    """
+NJ_MORRIS_TAX_BOARD = SourceRegistryEntry(
+    source_id="nj_morris_tax_board",
+    display_name="Morris County Board of Taxation - Search Tax Records",
+    source_type=SourceType.TAX_BOARD.value,
+    status=SourceStatus.PLANNED.value,
+    reliability=SourceReliability.OFFICIAL.value,
+    access_method=SourceAccessMethod.PUBLIC_WEB_PORTAL.value,
+    access_policy=SourceAccessPolicy.PUBLIC_WITH_TERMS.value,
+    data_format=SourceDataFormat.HTML.value,
+    jurisdiction="Morris County, New Jersey",
+    state="NJ",
+    county="Morris",
+    municipality=None,
+    source_url="https://mcweb1.co.morris.nj.us/MCTaxBoard/SearchTaxRecords.aspx",
+    documentation_url="https://mcweb1.co.morris.nj.us/MCTaxBoard/",
+    implementation_file=(
+        "app/public_records/connectors/"
+        "nj_morris_tax_board_connector.py"
+    ),
+    capabilities=[
+        capability(
+            SourceClaimType.ADDRESS_IDENTITY,
+            notes=["Tax-record search supports property-location lookup."],
+        ),
+        capability(
+            SourceClaimType.TAX_ASSESSMENT,
+            notes=["Supports tax-year search workflow and assessment context."],
+        ),
+        capability(
+            SourceClaimType.PROPERTY_TAX,
+            notes=["Supports property tax record context where available."],
+        ),
+        capability(
+            SourceClaimType.PARCEL_IDENTITY,
+            notes=["Supports block/lot search workflow."],
+        ),
+        capability(
+            SourceClaimType.SALE_HISTORY,
+            notes=[
+                "May support sale-record context through tax board "
+                "records and SR1A-related data where exposed."
+            ],
+        ),
+        capability(
+            SourceClaimType.OWNER_REFERENCE,
+            notes=[
+                "Owner search exists in the public tax-record interface. "
+                "Use carefully and preserve source context."
+            ],
+        ),
+        capability(
+            SourceClaimType.ACTIVE_LISTING_STATUS,
+            supported=False,
+            notes=[
+                "Tax records do not establish current active MLS/listing status."
+            ],
+        ),
+        capability(
+            SourceClaimType.UNDER_CONTRACT_STATUS,
+            supported=False,
+            notes=[
+                "Tax records do not establish current under-contract status."
+            ],
+        ),
+        capability(
+            SourceClaimType.LISTING_PRICE,
+            supported=False,
+            notes=[
+                "Tax records do not establish current listing price."
+            ],
+        ),
+    ],
+    request_policy=PUBLIC_PORTAL_POLICY,
+    expected_claims=[
+        SourceClaimType.ADDRESS_IDENTITY.value,
+        SourceClaimType.TAX_ASSESSMENT.value,
+        SourceClaimType.PROPERTY_TAX.value,
+        SourceClaimType.PARCEL_IDENTITY.value,
+        SourceClaimType.SALE_HISTORY.value,
+        SourceClaimType.OWNER_REFERENCE.value,
+    ],
+    unsupported_claims=[
+        SourceClaimType.ACTIVE_LISTING_STATUS.value,
+        SourceClaimType.UNDER_CONTRACT_STATUS.value,
+        SourceClaimType.LISTING_PRICE.value,
+        SourceClaimType.DAYS_ON_MARKET.value,
+    ],
+    official_source_required=True,
+    mock_data_allowed=False,
+    notes=[
+        "Initial Morris County tax source.",
+        "Search modes include property location, owner, block/lot, and tax year.",
+        "Public records should not be treated as current listing feed data.",
+    ],
+    metadata={
+        "source_family": "morris_county_public_records",
+        "priority": 1,
+        "first_connector_target": True,
+        "source_verification": "web_verified",
+    },
+)
 
-    NONE = "none"
-    NETWORK_ERROR = "network_error"
-    TIMEOUT = "timeout"
-    AUTH_REQUIRED = "auth_required"
-    RATE_LIMITED = "rate_limited"
-    NOT_FOUND = "not_found"
-    EMPTY_RESULT = "empty_result"
-    PARSE_ERROR = "parse_error"
-    INVALID_QUERY = "invalid_query"
-    SOURCE_UNAVAILABLE = "source_unavailable"
-    CONNECTOR_NOT_IMPLEMENTED = "connector_not_implemented"
-    MANUAL_REVIEW_REQUIRED = "manual_review_required"
-    UNKNOWN = "unknown"
+
+NJ_MORRIS_COUNTY_CLERK = SourceRegistryEntry(
+    source_id="nj_morris_county_clerk_property_records",
+    display_name="Morris County Clerk - Online Property Records Search",
+    source_type=SourceType.COUNTY_CLERK.value,
+    status=SourceStatus.PLANNED.value,
+    reliability=SourceReliability.OFFICIAL.value,
+    access_method=SourceAccessMethod.PUBLIC_WEB_PORTAL.value,
+    access_policy=SourceAccessPolicy.PUBLIC_WITH_TERMS.value,
+    data_format=SourceDataFormat.MIXED.value,
+    jurisdiction="Morris County, New Jersey",
+    state="NJ",
+    county="Morris",
+    municipality=None,
+    source_url="https://www.morriscountyclerk.org/Services/Online-Property-Records-Search",
+    documentation_url="https://www.morriscountyclerk.org/Home",
+    implementation_file=(
+        "app/public_records/connectors/"
+        "nj_morris_clerk_connector.py"
+    ),
+    capabilities=[
+        capability(
+            SourceClaimType.DEED_REFERENCE,
+            notes=["County Clerk manages recorded deed references."],
+        ),
+        capability(
+            SourceClaimType.MORTGAGE_REFERENCE,
+            notes=["County Clerk manages recorded mortgage references."],
+        ),
+        capability(
+            SourceClaimType.LIEN_REFERENCE,
+            notes=["County Clerk may expose lien document references."],
+        ),
+        capability(
+            SourceClaimType.SALE_HISTORY,
+            notes=[
+                "Recorded deed/transfer documents can support sale-history context."
+            ],
+        ),
+        capability(
+            SourceClaimType.OWNER_REFERENCE,
+            notes=[
+                "Recorded documents may contain party references. "
+                "Use only as public-record context."
+            ],
+        ),
+        capability(
+            SourceClaimType.ACTIVE_LISTING_STATUS,
+            supported=False,
+            notes=[
+                "County Clerk records do not establish current active listing status."
+            ],
+        ),
+        capability(
+            SourceClaimType.UNDER_CONTRACT_STATUS,
+            supported=False,
+            notes=[
+                "County Clerk records do not establish current under-contract status."
+            ],
+        ),
+        capability(
+            SourceClaimType.LISTING_PRICE,
+            supported=False,
+            notes=[
+                "County Clerk records do not establish current listing price."
+            ],
+        ),
+    ],
+    request_policy=PUBLIC_PORTAL_POLICY,
+    expected_claims=[
+        SourceClaimType.DEED_REFERENCE.value,
+        SourceClaimType.MORTGAGE_REFERENCE.value,
+        SourceClaimType.LIEN_REFERENCE.value,
+        SourceClaimType.SALE_HISTORY.value,
+        SourceClaimType.OWNER_REFERENCE.value,
+    ],
+    unsupported_claims=[
+        SourceClaimType.ACTIVE_LISTING_STATUS.value,
+        SourceClaimType.UNDER_CONTRACT_STATUS.value,
+        SourceClaimType.LISTING_PRICE.value,
+        SourceClaimType.DAYS_ON_MARKET.value,
+    ],
+    official_source_required=True,
+    mock_data_allowed=False,
+    notes=[
+        "Initial Morris County deed and recorded-document source.",
+        "Online property records search provides access to many recorded records.",
+        "Recorded legal documents are not equivalent to current listing status.",
+    ],
+    metadata={
+        "source_family": "morris_county_public_records",
+        "priority": 2,
+        "source_verification": "web_verified",
+    },
+)
+
+
+NJ_MORRIS_GIS_PARCEL_SEARCHER = SourceRegistryEntry(
+    source_id="nj_morris_gis_parcel_searcher",
+    display_name="Morris County Tax Board Parcel Searcher / MCPRIMA",
+    source_type=SourceType.PARCEL_GIS.value,
+    status=SourceStatus.PLANNED.value,
+    reliability=SourceReliability.OFFICIAL.value,
+    access_method=SourceAccessMethod.GIS_SERVICE.value,
+    access_policy=SourceAccessPolicy.PUBLIC_WITH_TERMS.value,
+    data_format=SourceDataFormat.GIS_LAYER.value,
+    jurisdiction="Morris County, New Jersey",
+    state="NJ",
+    county="Morris",
+    municipality=None,
+    source_url="https://morrisgisapps.co.morris.nj.us/apps/parcelsearcher/",
+    documentation_url="https://morrisgisapps.co.morris.nj.us/",
+    implementation_file=(
+        "app/public_records/connectors/"
+        "nj_morris_gis_connector.py"
+    ),
+    capabilities=[
+        capability(
+            SourceClaimType.PARCEL_IDENTITY,
+            notes=["Supports parcel boundary and parcel identity context."],
+        ),
+        capability(
+            SourceClaimType.ADDRESS_IDENTITY,
+            notes=["Can support address-to-parcel context where exposed."],
+        ),
+        capability(
+            SourceClaimType.MUNICIPALITY,
+            notes=["Can support municipal context from parcel data."],
+        ),
+        capability(
+            SourceClaimType.COUNTY,
+            notes=["Can support county context."],
+        ),
+        capability(
+            SourceClaimType.LOT_SIZE,
+            notes=["May support land/parcel attributes where exposed."],
+        ),
+        capability(
+            SourceClaimType.BUILDING_FACTS,
+            notes=[
+                "May expose MOD-IV property attributes depending on available fields."
+            ],
+        ),
+        capability(
+            SourceClaimType.ACTIVE_LISTING_STATUS,
+            supported=False,
+            notes=["Parcel GIS does not establish current active listing status."],
+        ),
+        capability(
+            SourceClaimType.UNDER_CONTRACT_STATUS,
+            supported=False,
+            notes=["Parcel GIS does not establish current under-contract status."],
+        ),
+    ],
+    request_policy=GIS_SERVICE_POLICY,
+    expected_claims=[
+        SourceClaimType.PARCEL_IDENTITY.value,
+        SourceClaimType.ADDRESS_IDENTITY.value,
+        SourceClaimType.MUNICIPALITY.value,
+        SourceClaimType.COUNTY.value,
+        SourceClaimType.LOT_SIZE.value,
+        SourceClaimType.BUILDING_FACTS.value,
+    ],
+    unsupported_claims=[
+        SourceClaimType.ACTIVE_LISTING_STATUS.value,
+        SourceClaimType.UNDER_CONTRACT_STATUS.value,
+        SourceClaimType.LISTING_PRICE.value,
+        SourceClaimType.DAYS_ON_MARKET.value,
+    ],
+    official_source_required=True,
+    mock_data_allowed=False,
+    notes=[
+        "Initial GIS parcel source for Morris County.",
+        "Useful for block/lot, parcel, municipal, and map context.",
+        "Must not be treated as listing-status source.",
+    ],
+    metadata={
+        "source_family": "morris_county_gis",
+        "priority": 3,
+        "source_verification": "web_verified",
+    },
+)
+
+
+NJ_STATE_PARCELS_MODIV = SourceRegistryEntry(
+    source_id="nj_state_parcels_modiv_composite",
+    display_name="NJGIN Parcels and MOD-IV Composite of New Jersey",
+    source_type=SourceType.STATE_ASSESSMENT_DATA.value,
+    status=SourceStatus.PLANNED.value,
+    reliability=SourceReliability.OFFICIAL.value,
+    access_method=SourceAccessMethod.DOWNLOADABLE_DATASET.value,
+    access_policy=SourceAccessPolicy.PUBLIC_WITH_TERMS.value,
+    data_format=SourceDataFormat.GIS_LAYER.value,
+    jurisdiction="State of New Jersey",
+    state="NJ",
+    county=None,
+    municipality=None,
+    source_url=(
+        "https://njogis-newjersey.opendata.arcgis.com/documents/"
+        "newjersey%3A%3Aparcels-and-mod-iv-composite-of-nj-download/about"
+    ),
+    documentation_url=(
+        "https://njogis-newjersey.opendata.arcgis.com/"
+    ),
+    implementation_file=(
+        "app/public_records/connectors/"
+        "nj_state_modiv_connector.py"
+    ),
+    capabilities=[
+        capability(
+            SourceClaimType.PARCEL_IDENTITY,
+            notes=["Statewide parcel identity and parcel/MOD-IV baseline."],
+        ),
+        capability(
+            SourceClaimType.TAX_ASSESSMENT,
+            notes=["MOD-IV assessment attributes where matched."],
+        ),
+        capability(
+            SourceClaimType.PROPERTY_TAX,
+            notes=["Property tax context from MOD-IV-derived records."],
+        ),
+        capability(
+            SourceClaimType.ADDRESS_IDENTITY,
+            notes=["Property location context where available."],
+        ),
+        capability(
+            SourceClaimType.PROPERTY_CLASS,
+            notes=["Property class context where provided by MOD-IV attributes."],
+        ),
+        capability(
+            SourceClaimType.MUNICIPALITY,
+            notes=["Municipal coding and property location context."],
+        ),
+        capability(
+            SourceClaimType.ACTIVE_LISTING_STATUS,
+            supported=False,
+            notes=[
+                "State parcel/MOD-IV records do not establish active listing status."
+            ],
+        ),
+        capability(
+            SourceClaimType.UNDER_CONTRACT_STATUS,
+            supported=False,
+            notes=[
+                "State parcel/MOD-IV records do not establish under-contract status."
+            ],
+        ),
+    ],
+    request_policy=DOWNLOADABLE_DATASET_POLICY,
+    expected_claims=[
+        SourceClaimType.PARCEL_IDENTITY.value,
+        SourceClaimType.TAX_ASSESSMENT.value,
+        SourceClaimType.PROPERTY_TAX.value,
+        SourceClaimType.ADDRESS_IDENTITY.value,
+        SourceClaimType.PROPERTY_CLASS.value,
+        SourceClaimType.MUNICIPALITY.value,
+    ],
+    unsupported_claims=[
+        SourceClaimType.ACTIVE_LISTING_STATUS.value,
+        SourceClaimType.UNDER_CONTRACT_STATUS.value,
+        SourceClaimType.LISTING_PRICE.value,
+        SourceClaimType.DAYS_ON_MARKET.value,
+    ],
+    official_source_required=True,
+    mock_data_allowed=False,
+    notes=[
+        "Statewide New Jersey parcel and MOD-IV source foundation.",
+        "Useful for expanding beyond Morris County.",
+        "Should be normalized before property-intelligence use.",
+    ],
+    metadata={
+        "source_family": "new_jersey_state_open_data",
+        "priority": 4,
+        "source_verification": "web_verified",
+    },
+)
 
 
 # ============================================================
-# SECTION 11 - SOURCE FRESHNESS ENUMERATION
+# SECTION 07 - FUTURE LISTING SOURCE ENTRIES
 # ============================================================
 
-class SourceFreshness(StrEnum):
-    """
-    Freshness of source data.
-    """
+MLS_RESO_FUTURE = SourceRegistryEntry(
+    source_id="mls_reso_future",
+    display_name="MLS / RESO Authorized Listing Feed",
+    source_type=SourceType.MLS_RESO.value,
+    status=SourceStatus.AUTH_REQUIRED.value,
+    reliability=SourceReliability.LICENSED.value,
+    access_method=SourceAccessMethod.LICENSED_FEED.value,
+    access_policy=SourceAccessPolicy.LICENSED.value,
+    data_format=SourceDataFormat.JSON.value,
+    jurisdiction="United States",
+    state=None,
+    county=None,
+    municipality=None,
+    source_url=None,
+    documentation_url="https://www.reso.org/",
+    implementation_file=None,
+    capabilities=[
+        capability(
+            SourceClaimType.ACTIVE_LISTING_STATUS,
+            requires_auth=True,
+            requires_license=True,
+            notes=["Required for reliable active listing status at scale."],
+        ),
+        capability(
+            SourceClaimType.UNDER_CONTRACT_STATUS,
+            requires_auth=True,
+            requires_license=True,
+            notes=["Required for reliable under-contract status at scale."],
+        ),
+        capability(
+            SourceClaimType.SOLD_STATUS,
+            requires_auth=True,
+            requires_license=True,
+            notes=["Can support closed-listing status where feed permits."],
+        ),
+        capability(
+            SourceClaimType.LISTING_PRICE,
+            requires_auth=True,
+            requires_license=True,
+            notes=["Can support current listing price where feed permits."],
+        ),
+        capability(
+            SourceClaimType.DAYS_ON_MARKET,
+            requires_auth=True,
+            requires_license=True,
+            notes=["Can support days-on-market where feed permits."],
+        ),
+        capability(
+            SourceClaimType.COMPARABLE_SALE,
+            requires_auth=True,
+            requires_license=True,
+            notes=["Can support comparable sales where permitted by feed."],
+        ),
+    ],
+    request_policy=LICENSED_FEED_POLICY,
+    expected_claims=[
+        SourceClaimType.ACTIVE_LISTING_STATUS.value,
+        SourceClaimType.UNDER_CONTRACT_STATUS.value,
+        SourceClaimType.SOLD_STATUS.value,
+        SourceClaimType.LISTING_PRICE.value,
+        SourceClaimType.DAYS_ON_MARKET.value,
+        SourceClaimType.COMPARABLE_SALE.value,
+    ],
+    unsupported_claims=[],
+    official_source_required=True,
+    mock_data_allowed=False,
+    notes=[
+        "Future authorized listing feed.",
+        "Do not implement without credentials, permissions, and compliance review.",
+        "This source class is required for reliable current listing status.",
+    ],
+    metadata={
+        "source_family": "listing_data",
+        "priority": 10,
+        "requires_business_access": True,
+    },
+)
 
-    LIVE = "live"
-    RECENT = "recent"
-    CURRENT_YEAR = "current_year"
-    HISTORICAL = "historical"
-    STALE = "stale"
-    UNKNOWN = "unknown"
+
+BROKER_FEED_FUTURE = SourceRegistryEntry(
+    source_id="broker_feed_future",
+    display_name="Authorized Broker Listing Feed",
+    source_type=SourceType.BROKER_FEED.value,
+    status=SourceStatus.AUTH_REQUIRED.value,
+    reliability=SourceReliability.AUTHORIZED.value,
+    access_method=SourceAccessMethod.LICENSED_FEED.value,
+    access_policy=SourceAccessPolicy.PERMISSION_REQUIRED.value,
+    data_format=SourceDataFormat.JSON.value,
+    jurisdiction="United States",
+    state=None,
+    county=None,
+    municipality=None,
+    source_url=None,
+    documentation_url=None,
+    implementation_file=None,
+    capabilities=[
+        capability(
+            SourceClaimType.ACTIVE_LISTING_STATUS,
+            requires_auth=True,
+            notes=["Broker-authorized feed may support listing status."],
+        ),
+        capability(
+            SourceClaimType.LISTING_PRICE,
+            requires_auth=True,
+            notes=["Broker-authorized feed may support listing price."],
+        ),
+        capability(
+            SourceClaimType.DAYS_ON_MARKET,
+            requires_auth=True,
+            notes=["Broker-authorized feed may support DOM if provided."],
+        ),
+    ],
+    request_policy=LICENSED_FEED_POLICY,
+    expected_claims=[
+        SourceClaimType.ACTIVE_LISTING_STATUS.value,
+        SourceClaimType.LISTING_PRICE.value,
+        SourceClaimType.DAYS_ON_MARKET.value,
+    ],
+    unsupported_claims=[],
+    official_source_required=True,
+    mock_data_allowed=False,
+    notes=[
+        "Future broker-authorized feed.",
+        "Potential source for Aussem broker, seller, and listing workflows.",
+    ],
+    metadata={
+        "source_family": "listing_data",
+        "priority": 11,
+        "requires_business_access": True,
+    },
+)
 
 
 # ============================================================
-# SECTION 12 - SOURCE LEGAL / ACCESS POLICY ENUMERATION
+# SECTION 08 - RISK / SCHOOL / MARKET FUTURE SOURCES
 # ============================================================
 
-class SourceAccessPolicy(StrEnum):
-    """
-    Access policy classification.
-    """
+FEMA_FLOOD_FUTURE = SourceRegistryEntry(
+    source_id="fema_flood_future",
+    display_name="FEMA Flood Risk / Flood Map Data",
+    source_type=SourceType.RISK_DATA.value,
+    status=SourceStatus.PLANNED.value,
+    reliability=SourceReliability.OFFICIAL.value,
+    access_method=SourceAccessMethod.OFFICIAL_API.value,
+    access_policy=SourceAccessPolicy.PUBLIC_WITH_TERMS.value,
+    data_format=SourceDataFormat.GIS_LAYER.value,
+    jurisdiction="United States",
+    source_url=None,
+    documentation_url="https://www.fema.gov/flood-maps",
+    implementation_file=None,
+    capabilities=[
+        capability(
+            SourceClaimType.FLOOD_CONTEXT,
+            notes=["Future flood-context source for property risk panels."],
+        ),
+    ],
+    request_policy=GIS_SERVICE_POLICY,
+    expected_claims=[
+        SourceClaimType.FLOOD_CONTEXT.value,
+    ],
+    unsupported_claims=[],
+    official_source_required=True,
+    mock_data_allowed=False,
+    notes=[
+        "Future flood risk connector.",
+        "Not implemented in Phase 2.10.",
+    ],
+    metadata={
+        "source_family": "risk_data",
+        "priority": 30,
+    },
+)
 
-    PUBLIC = "public"
-    PUBLIC_WITH_TERMS = "public_with_terms"
-    AUTHENTICATED = "authenticated"
-    LICENSED = "licensed"
-    PERMISSION_REQUIRED = "permission_required"
-    INTERNAL_ONLY = "internal_only"
-    UNKNOWN = "unknown"
+
+SCHOOL_DATA_FUTURE = SourceRegistryEntry(
+    source_id="school_data_future",
+    display_name="School Data Source",
+    source_type=SourceType.SCHOOL_DATA.value,
+    status=SourceStatus.PLANNED.value,
+    reliability=SourceReliability.AUTHORIZED.value,
+    access_method=SourceAccessMethod.FUTURE_CONNECTOR.value,
+    access_policy=SourceAccessPolicy.UNKNOWN.value,
+    data_format=SourceDataFormat.JSON.value,
+    jurisdiction="United States",
+    source_url=None,
+    documentation_url=None,
+    implementation_file=None,
+    capabilities=[
+        capability(
+            SourceClaimType.SCHOOL_DISTRICT,
+            notes=["Future source for school district and school context."],
+        ),
+    ],
+    request_policy=PUBLIC_PORTAL_POLICY,
+    expected_claims=[
+        SourceClaimType.SCHOOL_DISTRICT.value,
+    ],
+    unsupported_claims=[],
+    official_source_required=False,
+    mock_data_allowed=False,
+    notes=[
+        "Future school-data connector.",
+        "Must be reviewed for permitted data use before implementation.",
+    ],
+    metadata={
+        "source_family": "school_data",
+        "priority": 31,
+    },
+)
 
 
 # ============================================================
-# SECTION 13 - UTILITY FUNCTIONS
+# SECTION 09 - MASTER SOURCE REGISTRY
+# ============================================================
+
+SOURCE_REGISTRY: dict[str, SourceRegistryEntry] = {
+    NJ_MORRIS_TAX_BOARD.source_id: NJ_MORRIS_TAX_BOARD,
+    NJ_MORRIS_COUNTY_CLERK.source_id: NJ_MORRIS_COUNTY_CLERK,
+    NJ_MORRIS_GIS_PARCEL_SEARCHER.source_id: NJ_MORRIS_GIS_PARCEL_SEARCHER,
+    NJ_STATE_PARCELS_MODIV.source_id: NJ_STATE_PARCELS_MODIV,
+    MLS_RESO_FUTURE.source_id: MLS_RESO_FUTURE,
+    BROKER_FEED_FUTURE.source_id: BROKER_FEED_FUTURE,
+    FEMA_FLOOD_FUTURE.source_id: FEMA_FLOOD_FUTURE,
+    SCHOOL_DATA_FUTURE.source_id: SCHOOL_DATA_FUTURE,
+}
+
+
+# ============================================================
+# SECTION 10 - SOURCE GROUPS
+# ============================================================
+
+SOURCE_GROUPS = {
+    "morris_county_public_records": [
+        "nj_morris_tax_board",
+        "nj_morris_county_clerk_property_records",
+        "nj_morris_gis_parcel_searcher",
+    ],
+    "new_jersey_statewide_public_records": [
+        "nj_state_parcels_modiv_composite",
+    ],
+    "future_listing_status_sources": [
+        "mls_reso_future",
+        "broker_feed_future",
+    ],
+    "future_risk_sources": [
+        "fema_flood_future",
+    ],
+    "future_school_sources": [
+        "school_data_future",
+    ],
+}
+
+
+# ============================================================
+# SECTION 11 - CLAIM SOURCE GOVERNANCE
+# ============================================================
+
+CLAIM_SOURCE_GOVERNANCE = {
+    SourceClaimType.TAX_ASSESSMENT.value: [
+        "nj_morris_tax_board",
+        "nj_state_parcels_modiv_composite",
+    ],
+    SourceClaimType.PROPERTY_TAX.value: [
+        "nj_morris_tax_board",
+        "nj_state_parcels_modiv_composite",
+    ],
+    SourceClaimType.PARCEL_IDENTITY.value: [
+        "nj_morris_gis_parcel_searcher",
+        "nj_state_parcels_modiv_composite",
+        "nj_morris_tax_board",
+    ],
+    SourceClaimType.ADDRESS_IDENTITY.value: [
+        "nj_morris_tax_board",
+        "nj_morris_gis_parcel_searcher",
+        "nj_state_parcels_modiv_composite",
+    ],
+    SourceClaimType.DEED_REFERENCE.value: [
+        "nj_morris_county_clerk_property_records",
+    ],
+    SourceClaimType.MORTGAGE_REFERENCE.value: [
+        "nj_morris_county_clerk_property_records",
+    ],
+    SourceClaimType.LIEN_REFERENCE.value: [
+        "nj_morris_county_clerk_property_records",
+    ],
+    SourceClaimType.SALE_HISTORY.value: [
+        "nj_morris_county_clerk_property_records",
+        "nj_morris_tax_board",
+        "mls_reso_future",
+    ],
+    SourceClaimType.OWNER_REFERENCE.value: [
+        "nj_morris_tax_board",
+        "nj_morris_county_clerk_property_records",
+    ],
+    SourceClaimType.ACTIVE_LISTING_STATUS.value: [
+        "mls_reso_future",
+        "broker_feed_future",
+    ],
+    SourceClaimType.UNDER_CONTRACT_STATUS.value: [
+        "mls_reso_future",
+        "broker_feed_future",
+    ],
+    SourceClaimType.LISTING_PRICE.value: [
+        "mls_reso_future",
+        "broker_feed_future",
+    ],
+    SourceClaimType.DAYS_ON_MARKET.value: [
+        "mls_reso_future",
+        "broker_feed_future",
+    ],
+    SourceClaimType.FLOOD_CONTEXT.value: [
+        "fema_flood_future",
+    ],
+    SourceClaimType.SCHOOL_DISTRICT.value: [
+        "school_data_future",
+    ],
+}
+
+
+CLAIMS_PUBLIC_RECORDS_CANNOT_PROVE = [
+    SourceClaimType.ACTIVE_LISTING_STATUS.value,
+    SourceClaimType.UNDER_CONTRACT_STATUS.value,
+    SourceClaimType.LISTING_PRICE.value,
+    SourceClaimType.DAYS_ON_MARKET.value,
+]
+
+
+# ============================================================
+# SECTION 12 - REGISTRY ACCESS FUNCTIONS
 # ============================================================
 
 def utc_now() -> str:
@@ -304,1146 +915,594 @@ def utc_now() -> str:
     return datetime.now(UTC).isoformat()
 
 
-def stable_hash(value: Any) -> str:
+def get_source_registry_metadata() -> dict[str, Any]:
     """
-    Create a stable SHA-256 hash for a source object.
-    """
-
-    serialized = json.dumps(
-        value,
-        sort_keys=True,
-        default=str,
-        ensure_ascii=False,
-    )
-
-    return hashlib.sha256(
-        serialized.encode("utf-8"),
-    ).hexdigest()
-
-
-def clamp_confidence(value: float | int | None) -> float:
-    """
-    Clamp confidence to 0.0 through 1.0.
-    """
-
-    if value is None:
-        return 0.0
-
-    try:
-        numeric = float(value)
-    except (TypeError, ValueError):
-        return 0.0
-
-    if numeric < 0.0:
-        return 0.0
-
-    if numeric > 1.0:
-        return 1.0
-
-    return numeric
-
-
-def confidence_band(value: float | int | None) -> SourceConfidenceBand:
-    """
-    Convert numeric confidence into a confidence band.
-    """
-
-    numeric = clamp_confidence(value)
-
-    if numeric >= 0.90:
-        return SourceConfidenceBand.VERY_HIGH
-
-    if numeric >= 0.75:
-        return SourceConfidenceBand.HIGH
-
-    if numeric >= 0.55:
-        return SourceConfidenceBand.MEDIUM
-
-    if numeric >= 0.35:
-        return SourceConfidenceBand.LOW
-
-    if numeric > 0:
-        return SourceConfidenceBand.VERY_LOW
-
-    return SourceConfidenceBand.UNKNOWN
-
-
-def safe_string(value: Any) -> str:
-    """
-    Convert unknown value to safe string.
-    """
-
-    if value is None:
-        return ""
-
-    return str(value).strip()
-
-
-def normalize_key(value: str | None) -> str:
-    """
-    Normalize source keys for comparisons.
-    """
-
-    if not value:
-        return ""
-
-    return "_".join(
-        value.lower().strip().replace("-", " ").split()
-    )
-
-
-# ============================================================
-# SECTION 14 - SOURCE ATTRIBUTION MODEL
-# ============================================================
-
-@dataclass
-class SourceAttribution:
-    """
-    Describes where a fact or record came from.
-    """
-
-    source_id: str
-    source_name: str
-    source_type: str
-    reliability: str
-    access_method: str
-    source_url: str | None = None
-    source_agency: str | None = None
-    source_jurisdiction: str | None = None
-    source_description: str | None = None
-    retrieved_at: str = field(default_factory=utc_now)
-    terms_note: str | None = None
-    citation_note: str | None = None
-
-    def to_dict(self) -> dict[str, Any]:
-        """
-        Convert attribution to dictionary.
-        """
-
-        return asdict(self)
-
-    def fingerprint(self) -> str:
-        """
-        Return stable attribution fingerprint.
-        """
-
-        return stable_hash(self.to_dict())
-
-
-# ============================================================
-# SECTION 15 - SOURCE TIMESTAMP MODEL
-# ============================================================
-
-@dataclass
-class SourceTimestamp:
-    """
-    Tracks data recency.
-    """
-
-    retrieved_at: str = field(default_factory=utc_now)
-    source_updated_at: str | None = None
-    source_effective_date: str | None = None
-    record_date: str | None = None
-    tax_year: int | None = None
-    freshness: str = SourceFreshness.UNKNOWN.value
-
-    def to_dict(self) -> dict[str, Any]:
-        return asdict(self)
-
-
-# ============================================================
-# SECTION 16 - SOURCE ERROR MODEL
-# ============================================================
-
-@dataclass
-class SourceError:
-    """
-    Standardized source error.
-    """
-
-    error_type: str
-    message: str
-    source_id: str | None = None
-    source_name: str | None = None
-    recoverable: bool = True
-    retry_recommended: bool = False
-    manual_review_required: bool = False
-    raw_error: str | None = None
-    occurred_at: str = field(default_factory=utc_now)
-
-    def to_dict(self) -> dict[str, Any]:
-        return asdict(self)
-
-
-# ============================================================
-# SECTION 17 - SOURCE WARNING MODEL
-# ============================================================
-
-@dataclass
-class SourceWarning:
-    """
-    Warning emitted during source processing.
-    """
-
-    warning_code: str
-    message: str
-    severity: str = "medium"
-    field_name: str | None = None
-    source_id: str | None = None
-    generated_at: str = field(default_factory=utc_now)
-
-    def to_dict(self) -> dict[str, Any]:
-        return asdict(self)
-
-
-# ============================================================
-# SECTION 18 - SOURCE QUERY MODEL
-# ============================================================
-
-@dataclass
-class SourceQuery:
-    """
-    Represents a query sent to a source connector.
-    """
-
-    query_id: str
-    source_id: str
-    query_type: str
-    raw_query: str
-    normalized_query: str | None = None
-    address: str | None = None
-    municipality: str | None = None
-    county: str | None = None
-    state: str | None = None
-    block: str | None = None
-    lot: str | None = None
-    qualifier: str | None = None
-    owner_name: str | None = None
-    tax_year: int | None = None
-    metadata: dict[str, Any] = field(default_factory=dict)
-    created_at: str = field(default_factory=utc_now)
-
-    def to_dict(self) -> dict[str, Any]:
-        return asdict(self)
-
-    def fingerprint(self) -> str:
-        return stable_hash(self.to_dict())
-
-
-# ============================================================
-# SECTION 19 - SOURCE FIELD MODEL
-# ============================================================
-
-@dataclass
-class SourceField:
-    """
-    Represents one field extracted from a source.
-    """
-
-    field_name: str
-    value: Any
-    claim_type: str
-    attribution: SourceAttribution
-    confidence: float
-    confidence_band: str | None = None
-    raw_value: Any | None = None
-    normalized_value: Any | None = None
-    unit: str | None = None
-    data_format: str | None = None
-    timestamp: SourceTimestamp | None = None
-    notes: list[str] = field(default_factory=list)
-    warnings: list[SourceWarning] = field(default_factory=list)
-
-    def __post_init__(self) -> None:
-        self.confidence = clamp_confidence(self.confidence)
-
-        if self.confidence_band is None:
-            self.confidence_band = confidence_band(self.confidence).value
-
-        if self.timestamp is None:
-            self.timestamp = SourceTimestamp()
-
-    def to_dict(self) -> dict[str, Any]:
-        return {
-            "field_name": self.field_name,
-            "value": self.value,
-            "claim_type": self.claim_type,
-            "attribution": self.attribution.to_dict(),
-            "confidence": self.confidence,
-            "confidence_band": self.confidence_band,
-            "raw_value": self.raw_value,
-            "normalized_value": self.normalized_value,
-            "unit": self.unit,
-            "data_format": self.data_format,
-            "timestamp": (
-                self.timestamp.to_dict()
-                if self.timestamp
-                else None
-            ),
-            "notes": self.notes,
-            "warnings": [
-                warning.to_dict()
-                for warning in self.warnings
-            ],
-        }
-
-    def fingerprint(self) -> str:
-        return stable_hash(self.to_dict())
-
-
-# ============================================================
-# SECTION 20 - SOURCE RECORD REFERENCE MODEL
-# ============================================================
-
-@dataclass
-class SourceRecordReference:
-    """
-    Lightweight reference to a source record.
-    """
-
-    record_id: str
-    source_id: str
-    source_name: str
-    record_type: str
-    display_label: str
-    source_url: str | None = None
-    document_id: str | None = None
-    book: str | None = None
-    page: str | None = None
-    instrument_number: str | None = None
-    block: str | None = None
-    lot: str | None = None
-    municipality: str | None = None
-    county: str | None = None
-    state: str | None = None
-    record_date: str | None = None
-    retrieved_at: str = field(default_factory=utc_now)
-    metadata: dict[str, Any] = field(default_factory=dict)
-
-    def to_dict(self) -> dict[str, Any]:
-        return asdict(self)
-
-    def fingerprint(self) -> str:
-        return stable_hash(self.to_dict())
-
-
-# ============================================================
-# SECTION 21 - SOURCE CONFIDENCE REPORT MODEL
-# ============================================================
-
-@dataclass
-class SourceConfidenceReport:
-    """
-    Confidence report for one source result.
-    """
-
-    confidence: float
-    confidence_band: str | None = None
-    positive_factors: list[str] = field(default_factory=list)
-    negative_factors: list[str] = field(default_factory=list)
-    missing_factors: list[str] = field(default_factory=list)
-    source_agreement: str | None = None
-    manual_review_required: bool = False
-    explanation: str | None = None
-
-    def __post_init__(self) -> None:
-        self.confidence = clamp_confidence(self.confidence)
-
-        if self.confidence_band is None:
-            self.confidence_band = confidence_band(self.confidence).value
-
-    def to_dict(self) -> dict[str, Any]:
-        return asdict(self)
-
-
-# ============================================================
-# SECTION 22 - SOURCE RESULT MODEL
-# ============================================================
-
-@dataclass
-class SourceResult:
-    """
-    Standard result returned by every source connector.
-    """
-
-    result_id: str
-    source_id: str
-    source_name: str
-    source_type: str
-    status: str
-    query: SourceQuery | None = None
-    attribution: SourceAttribution | None = None
-    records_found: int = 0
-    fields: list[SourceField] = field(default_factory=list)
-    record_references: list[SourceRecordReference] = field(default_factory=list)
-    raw_payload: Any | None = None
-    parsed_payload: Any | None = None
-    confidence_report: SourceConfidenceReport | None = None
-    errors: list[SourceError] = field(default_factory=list)
-    warnings: list[SourceWarning] = field(default_factory=list)
-    metadata: dict[str, Any] = field(default_factory=dict)
-    retrieved_at: str = field(default_factory=utc_now)
-
-    def to_dict(self) -> dict[str, Any]:
-        return {
-            "result_id": self.result_id,
-            "source_id": self.source_id,
-            "source_name": self.source_name,
-            "source_type": self.source_type,
-            "status": self.status,
-            "query": (
-                self.query.to_dict()
-                if self.query
-                else None
-            ),
-            "attribution": (
-                self.attribution.to_dict()
-                if self.attribution
-                else None
-            ),
-            "records_found": self.records_found,
-            "fields": [
-                source_field.to_dict()
-                for source_field in self.fields
-            ],
-            "record_references": [
-                reference.to_dict()
-                for reference in self.record_references
-            ],
-            "raw_payload": self.raw_payload,
-            "parsed_payload": self.parsed_payload,
-            "confidence_report": (
-                self.confidence_report.to_dict()
-                if self.confidence_report
-                else None
-            ),
-            "errors": [
-                error.to_dict()
-                for error in self.errors
-            ],
-            "warnings": [
-                warning.to_dict()
-                for warning in self.warnings
-            ],
-            "metadata": self.metadata,
-            "retrieved_at": self.retrieved_at,
-        }
-
-    def fingerprint(self) -> str:
-        return stable_hash(self.to_dict())
-
-    def has_errors(self) -> bool:
-        """
-        Return whether result has errors.
-        """
-
-        return len(self.errors) > 0
-
-    def is_successful(self) -> bool:
-        """
-        Return whether result is successful enough to use.
-        """
-
-        return self.status in {
-            SourceStatus.ACTIVE.value,
-            SourceStatus.CONNECTED.value,
-            SourceStatus.AVAILABLE.value,
-            SourceStatus.PARTIAL.value,
-        } and not self.has_errors()
-
-
-# ============================================================
-# SECTION 23 - SOURCE CONNECTOR CAPABILITY MODEL
-# ============================================================
-
-@dataclass
-class SourceConnectorCapability:
-    """
-    Declares what a connector can support.
-    """
-
-    claim_type: str
-    supported: bool
-    requires_auth: bool = False
-    requires_license: bool = False
-    notes: list[str] = field(default_factory=list)
-
-    def to_dict(self) -> dict[str, Any]:
-        return asdict(self)
-
-
-# ============================================================
-# SECTION 24 - SOURCE REQUEST POLICY MODEL
-# ============================================================
-
-@dataclass
-class SourceRequestPolicy:
-    """
-    Safe request policy for a connector.
-    """
-
-    timeout_seconds: int = 20
-    max_retries: int = 1
-    respect_rate_limits: bool = True
-    user_agent_required: bool = True
-    uncontrolled_scraping_allowed: bool = False
-    bypass_access_controls_allowed: bool = False
-    store_raw_payload: bool = False
-    manual_review_on_ambiguity: bool = True
-    notes: list[str] = field(default_factory=list)
-
-    def to_dict(self) -> dict[str, Any]:
-        return asdict(self)
-
-
-# ============================================================
-# SECTION 25 - SOURCE REGISTRY ENTRY MODEL
-# ============================================================
-
-@dataclass
-class SourceRegistryEntry:
-    """
-    Registry entry for an official or planned source.
-    """
-
-    source_id: str
-    display_name: str
-    source_type: str
-    status: str
-    reliability: str
-    access_method: str
-    access_policy: str
-    data_format: str
-    jurisdiction: str | None = None
-    state: str | None = None
-    county: str | None = None
-    municipality: str | None = None
-    source_url: str | None = None
-    documentation_url: str | None = None
-    implementation_file: str | None = None
-    capabilities: list[SourceConnectorCapability] = field(default_factory=list)
-    request_policy: SourceRequestPolicy = field(default_factory=SourceRequestPolicy)
-    expected_claims: list[str] = field(default_factory=list)
-    unsupported_claims: list[str] = field(default_factory=list)
-    official_source_required: bool = True
-    mock_data_allowed: bool = False
-    notes: list[str] = field(default_factory=list)
-    metadata: dict[str, Any] = field(default_factory=dict)
-    created_at: str = field(default_factory=utc_now)
-    updated_at: str = field(default_factory=utc_now)
-
-    def to_dict(self) -> dict[str, Any]:
-        return {
-            "source_id": self.source_id,
-            "display_name": self.display_name,
-            "source_type": self.source_type,
-            "status": self.status,
-            "reliability": self.reliability,
-            "access_method": self.access_method,
-            "access_policy": self.access_policy,
-            "data_format": self.data_format,
-            "jurisdiction": self.jurisdiction,
-            "state": self.state,
-            "county": self.county,
-            "municipality": self.municipality,
-            "source_url": self.source_url,
-            "documentation_url": self.documentation_url,
-            "implementation_file": self.implementation_file,
-            "capabilities": [
-                capability.to_dict()
-                for capability in self.capabilities
-            ],
-            "request_policy": self.request_policy.to_dict(),
-            "expected_claims": self.expected_claims,
-            "unsupported_claims": self.unsupported_claims,
-            "official_source_required": self.official_source_required,
-            "mock_data_allowed": self.mock_data_allowed,
-            "notes": self.notes,
-            "metadata": self.metadata,
-            "created_at": self.created_at,
-            "updated_at": self.updated_at,
-        }
-
-    def fingerprint(self) -> str:
-        return stable_hash(self.to_dict())
-
-    def supports_claim(self, claim_type: str) -> bool:
-        """
-        Return whether this source supports a claim type.
-        """
-
-        if claim_type in self.expected_claims:
-            return True
-
-        for capability in self.capabilities:
-            if capability.claim_type == claim_type:
-                return capability.supported
-
-        return False
-
-
-# ============================================================
-# SECTION 26 - SOURCE VALIDATION ISSUE MODEL
-# ============================================================
-
-@dataclass
-class SourceValidationIssue:
-    """
-    Validation issue for source records or connectors.
-    """
-
-    issue_code: str
-    message: str
-    severity: str = "medium"
-    source_id: str | None = None
-    field_name: str | None = None
-    claim_type: str | None = None
-    manual_review_required: bool = False
-
-    def to_dict(self) -> dict[str, Any]:
-        return asdict(self)
-
-
-# ============================================================
-# SECTION 27 - SOURCE VALIDATION REPORT MODEL
-# ============================================================
-
-@dataclass
-class SourceValidationReport:
-    """
-    Validation report for a source result or registry entry.
-    """
-
-    valid: bool
-    issues: list[SourceValidationIssue] = field(default_factory=list)
-    warnings: list[SourceWarning] = field(default_factory=list)
-    checked_at: str = field(default_factory=utc_now)
-
-    def to_dict(self) -> dict[str, Any]:
-        return {
-            "valid": self.valid,
-            "issues": [
-                issue.to_dict()
-                for issue in self.issues
-            ],
-            "warnings": [
-                warning.to_dict()
-                for warning in self.warnings
-            ],
-            "checked_at": self.checked_at,
-        }
-
-
-# ============================================================
-# SECTION 28 - SOURCE BATCH RESULT MODEL
-# ============================================================
-
-@dataclass
-class SourceBatchResult:
-    """
-    Aggregated result across multiple source connectors.
-    """
-
-    batch_id: str
-    query: SourceQuery
-    results: list[SourceResult] = field(default_factory=list)
-    started_at: str = field(default_factory=utc_now)
-    completed_at: str | None = None
-    status: str = SourceStatus.PARTIAL.value
-    errors: list[SourceError] = field(default_factory=list)
-    warnings: list[SourceWarning] = field(default_factory=list)
-    metadata: dict[str, Any] = field(default_factory=dict)
-
-    def complete(self) -> None:
-        """
-        Mark batch complete.
-        """
-
-        self.completed_at = utc_now()
-
-        if self.errors:
-            self.status = SourceStatus.ERROR.value
-            return
-
-        if not self.results:
-            self.status = SourceStatus.EMPTY.value
-            return
-
-        if all(result.is_successful() for result in self.results):
-            self.status = SourceStatus.AVAILABLE.value
-            return
-
-        self.status = SourceStatus.PARTIAL.value
-
-    def to_dict(self) -> dict[str, Any]:
-        return {
-            "batch_id": self.batch_id,
-            "query": self.query.to_dict(),
-            "results": [
-                result.to_dict()
-                for result in self.results
-            ],
-            "started_at": self.started_at,
-            "completed_at": self.completed_at,
-            "status": self.status,
-            "errors": [
-                error.to_dict()
-                for error in self.errors
-            ],
-            "warnings": [
-                warning.to_dict()
-                for warning in self.warnings
-            ],
-            "metadata": self.metadata,
-        }
-
-
-# ============================================================
-# SECTION 29 - SOURCE FACT MODEL
-# ============================================================
-
-@dataclass
-class SourceFact:
-    """
-    One claimable fact backed by one or more source fields.
-    """
-
-    fact_id: str
-    claim_type: str
-    label: str
-    value: Any
-    confidence: float
-    confidence_band: str | None = None
-    primary_source: SourceAttribution | None = None
-    supporting_fields: list[SourceField] = field(default_factory=list)
-    supporting_record_references: list[SourceRecordReference] = field(
-        default_factory=list
-    )
-    conflicts: list[str] = field(default_factory=list)
-    missing_context: list[str] = field(default_factory=list)
-    manual_review_required: bool = False
-    generated_at: str = field(default_factory=utc_now)
-
-    def __post_init__(self) -> None:
-        self.confidence = clamp_confidence(self.confidence)
-
-        if self.confidence_band is None:
-            self.confidence_band = confidence_band(self.confidence).value
-
-    def to_dict(self) -> dict[str, Any]:
-        return {
-            "fact_id": self.fact_id,
-            "claim_type": self.claim_type,
-            "label": self.label,
-            "value": self.value,
-            "confidence": self.confidence,
-            "confidence_band": self.confidence_band,
-            "primary_source": (
-                self.primary_source.to_dict()
-                if self.primary_source
-                else None
-            ),
-            "supporting_fields": [
-                field_item.to_dict()
-                for field_item in self.supporting_fields
-            ],
-            "supporting_record_references": [
-                reference.to_dict()
-                for reference in self.supporting_record_references
-            ],
-            "conflicts": self.conflicts,
-            "missing_context": self.missing_context,
-            "manual_review_required": self.manual_review_required,
-            "generated_at": self.generated_at,
-        }
-
-    def fingerprint(self) -> str:
-        return stable_hash(self.to_dict())
-
-
-# ============================================================
-# SECTION 30 - SOURCE MERGE REPORT MODEL
-# ============================================================
-
-@dataclass
-class SourceMergeReport:
-    """
-    Report created when multiple source results are combined.
-    """
-
-    merge_id: str
-    subject: str
-    source_results: list[SourceResult]
-    facts: list[SourceFact] = field(default_factory=list)
-    conflicts: list[str] = field(default_factory=list)
-    missing_sources: list[str] = field(default_factory=list)
-    confidence_report: SourceConfidenceReport | None = None
-    manual_review_required: bool = False
-    generated_at: str = field(default_factory=utc_now)
-
-    def to_dict(self) -> dict[str, Any]:
-        return {
-            "merge_id": self.merge_id,
-            "subject": self.subject,
-            "source_results": [
-                result.to_dict()
-                for result in self.source_results
-            ],
-            "facts": [
-                fact.to_dict()
-                for fact in self.facts
-            ],
-            "conflicts": self.conflicts,
-            "missing_sources": self.missing_sources,
-            "confidence_report": (
-                self.confidence_report.to_dict()
-                if self.confidence_report
-                else None
-            ),
-            "manual_review_required": self.manual_review_required,
-            "generated_at": self.generated_at,
-        }
-
-
-# ============================================================
-# SECTION 31 - SOURCE MODEL VALIDATION HELPERS
-# ============================================================
-
-def validate_registry_entry(
-    entry: SourceRegistryEntry,
-) -> SourceValidationReport:
-    """
-    Validate source registry entry.
-    """
-
-    issues: list[SourceValidationIssue] = []
-
-    if not entry.source_id:
-        issues.append(
-            SourceValidationIssue(
-                issue_code="missing_source_id",
-                message="Source registry entry is missing source_id.",
-                severity="high",
-            )
-        )
-
-    if not entry.display_name:
-        issues.append(
-            SourceValidationIssue(
-                issue_code="missing_display_name",
-                message="Source registry entry is missing display name.",
-                severity="medium",
-                source_id=entry.source_id,
-            )
-        )
-
-    if entry.mock_data_allowed:
-        issues.append(
-            SourceValidationIssue(
-                issue_code="mock_data_not_allowed",
-                message="Mock property data is not allowed in real-data-first architecture.",
-                severity="critical",
-                source_id=entry.source_id,
-                manual_review_required=True,
-            )
-        )
-
-    if not entry.expected_claims and not entry.capabilities:
-        issues.append(
-            SourceValidationIssue(
-                issue_code="missing_capabilities",
-                message="Source registry entry does not declare supported claims.",
-                severity="medium",
-                source_id=entry.source_id,
-            )
-        )
-
-    return SourceValidationReport(
-        valid=not issues,
-        issues=issues,
-    )
-
-
-def validate_source_result(
-    result: SourceResult,
-) -> SourceValidationReport:
-    """
-    Validate source result.
-    """
-
-    issues: list[SourceValidationIssue] = []
-
-    if not result.source_id:
-        issues.append(
-            SourceValidationIssue(
-                issue_code="missing_source_id",
-                message="Source result is missing source_id.",
-                severity="high",
-            )
-        )
-
-    if not result.source_name:
-        issues.append(
-            SourceValidationIssue(
-                issue_code="missing_source_name",
-                message="Source result is missing source_name.",
-                severity="high",
-                source_id=result.source_id,
-            )
-        )
-
-    if result.status in {
-        SourceStatus.ERROR.value,
-        SourceStatus.FAILED.value,
-    } and not result.errors:
-        issues.append(
-            SourceValidationIssue(
-                issue_code="missing_error_details",
-                message="Source result failed but contains no error details.",
-                severity="medium",
-                source_id=result.source_id,
-            )
-        )
-
-    if result.fields and not result.attribution:
-        issues.append(
-            SourceValidationIssue(
-                issue_code="missing_attribution",
-                message="Source result has fields but no result-level attribution.",
-                severity="medium",
-                source_id=result.source_id,
-            )
-        )
-
-    return SourceValidationReport(
-        valid=not issues,
-        issues=issues,
-    )
-
-
-# ============================================================
-# SECTION 32 - FACTORY HELPERS
-# ============================================================
-
-def make_source_query(
-    *,
-    source_id: str,
-    query_type: str,
-    raw_query: str,
-    **kwargs: Any,
-) -> SourceQuery:
-    """
-    Create source query with stable ID.
-    """
-
-    payload = {
-        "source_id": source_id,
-        "query_type": query_type,
-        "raw_query": raw_query,
-        "kwargs": kwargs,
-    }
-
-    query_id = f"source-query-{stable_hash(payload)[:16]}"
-
-    return SourceQuery(
-        query_id=query_id,
-        source_id=source_id,
-        query_type=query_type,
-        raw_query=raw_query,
-        normalized_query=kwargs.get("normalized_query"),
-        address=kwargs.get("address"),
-        municipality=kwargs.get("municipality"),
-        county=kwargs.get("county"),
-        state=kwargs.get("state"),
-        block=kwargs.get("block"),
-        lot=kwargs.get("lot"),
-        qualifier=kwargs.get("qualifier"),
-        owner_name=kwargs.get("owner_name"),
-        tax_year=kwargs.get("tax_year"),
-        metadata=kwargs.get("metadata", {}),
-    )
-
-
-def make_source_error(
-    *,
-    error_type: SourceErrorType,
-    message: str,
-    source_id: str | None = None,
-    source_name: str | None = None,
-    raw_error: str | None = None,
-) -> SourceError:
-    """
-    Create source error.
-    """
-
-    return SourceError(
-        error_type=error_type.value,
-        message=message,
-        source_id=source_id,
-        source_name=source_name,
-        raw_error=raw_error,
-    )
-
-
-def make_empty_source_result(
-    *,
-    source_id: str,
-    source_name: str,
-    source_type: SourceType,
-    query: SourceQuery | None = None,
-    message: str | None = None,
-) -> SourceResult:
-    """
-    Create empty source result.
-    """
-
-    warning = SourceWarning(
-        warning_code="empty_result",
-        message=message or "Source returned no records.",
-        severity="medium",
-        source_id=source_id,
-    )
-
-    return SourceResult(
-        result_id=f"source-result-{stable_hash({'source_id': source_id, 'query': query.to_dict() if query else None})[:16]}",
-        source_id=source_id,
-        source_name=source_name,
-        source_type=source_type.value,
-        status=SourceStatus.EMPTY.value,
-        query=query,
-        records_found=0,
-        confidence_report=SourceConfidenceReport(
-            confidence=0.0,
-            negative_factors=["No records found."],
-            missing_factors=["Source record unavailable."],
-            explanation=message or "No source records were returned.",
-        ),
-        warnings=[warning],
-    )
-
-
-# ============================================================
-# SECTION 33 - MODEL REGISTRY
-# ============================================================
-
-SOURCE_MODEL_REGISTRY = {
-    "SourceAttribution": SourceAttribution,
-    "SourceTimestamp": SourceTimestamp,
-    "SourceError": SourceError,
-    "SourceWarning": SourceWarning,
-    "SourceQuery": SourceQuery,
-    "SourceField": SourceField,
-    "SourceRecordReference": SourceRecordReference,
-    "SourceConfidenceReport": SourceConfidenceReport,
-    "SourceResult": SourceResult,
-    "SourceConnectorCapability": SourceConnectorCapability,
-    "SourceRequestPolicy": SourceRequestPolicy,
-    "SourceRegistryEntry": SourceRegistryEntry,
-    "SourceValidationIssue": SourceValidationIssue,
-    "SourceValidationReport": SourceValidationReport,
-    "SourceBatchResult": SourceBatchResult,
-    "SourceFact": SourceFact,
-    "SourceMergeReport": SourceMergeReport,
-}
-
-
-# ============================================================
-# SECTION 34 - MODULE DIAGNOSTICS
-# ============================================================
-
-def get_source_models_metadata() -> dict[str, Any]:
-    """
-    Return source models module metadata.
+    Return source registry metadata.
     """
 
     return {
-        "name": SOURCE_MODELS_NAME,
-        "version": SOURCE_MODELS_VERSION,
-        "phase": SOURCE_MODELS_PHASE,
-        "status": SOURCE_MODELS_STATUS,
-        "model_count": len(SOURCE_MODEL_REGISTRY),
+        "name": SOURCE_REGISTRY_NAME,
+        "version": SOURCE_REGISTRY_VERSION,
+        "phase": SOURCE_REGISTRY_PHASE,
+        "status": SOURCE_REGISTRY_STATUS,
+        "description": SOURCE_REGISTRY_DESCRIPTION,
+        "source_count": len(SOURCE_REGISTRY),
+        "group_count": len(SOURCE_GROUPS),
         "generated_at": utc_now(),
     }
 
 
-def get_source_model_names() -> list[str]:
+def get_all_sources() -> dict[str, dict[str, Any]]:
     """
-    Return registered model names.
-    """
-
-    return list(SOURCE_MODEL_REGISTRY.keys())
-
-
-def get_source_enum_summary() -> dict[str, list[str]]:
-    """
-    Return enum values for diagnostics.
+    Return all registered sources as dictionaries.
     """
 
     return {
-        "SourceType": [item.value for item in SourceType],
-        "SourceStatus": [item.value for item in SourceStatus],
-        "SourceReliability": [item.value for item in SourceReliability],
-        "SourceAccessMethod": [item.value for item in SourceAccessMethod],
-        "SourceDataFormat": [item.value for item in SourceDataFormat],
-        "SourceClaimType": [item.value for item in SourceClaimType],
-        "SourceConfidenceBand": [item.value for item in SourceConfidenceBand],
-        "SourceErrorType": [item.value for item in SourceErrorType],
-        "SourceFreshness": [item.value for item in SourceFreshness],
-        "SourceAccessPolicy": [item.value for item in SourceAccessPolicy],
+        source_id: entry.to_dict()
+        for source_id, entry in SOURCE_REGISTRY.items()
+    }
+
+
+def get_source_entry(
+    source_id: str,
+) -> SourceRegistryEntry | None:
+    """
+    Return source registry entry by ID.
+    """
+
+    return SOURCE_REGISTRY.get(source_id)
+
+
+def get_source(
+    source_id: str,
+) -> dict[str, Any] | None:
+    """
+    Return source registry entry as dictionary.
+    """
+
+    entry = get_source_entry(source_id)
+
+    if entry is None:
+        return None
+
+    return entry.to_dict()
+
+
+def source_exists(
+    source_id: str,
+) -> bool:
+    """
+    Return whether source exists.
+    """
+
+    return source_id in SOURCE_REGISTRY
+
+
+def get_sources_by_type(
+    source_type: SourceType | str,
+) -> dict[str, dict[str, Any]]:
+    """
+    Return registered sources by source type.
+    """
+
+    source_type_value = (
+        source_type.value
+        if isinstance(source_type, SourceType)
+        else str(source_type)
+    )
+
+    return {
+        source_id: entry.to_dict()
+        for source_id, entry in SOURCE_REGISTRY.items()
+        if entry.source_type == source_type_value
+    }
+
+
+def get_sources_by_status(
+    status: SourceStatus | str,
+) -> dict[str, dict[str, Any]]:
+    """
+    Return registered sources by status.
+    """
+
+    status_value = (
+        status.value
+        if isinstance(status, SourceStatus)
+        else str(status)
+    )
+
+    return {
+        source_id: entry.to_dict()
+        for source_id, entry in SOURCE_REGISTRY.items()
+        if entry.status == status_value
+    }
+
+
+def get_sources_by_state(
+    state: str,
+) -> dict[str, dict[str, Any]]:
+    """
+    Return registered sources by state.
+    """
+
+    normalized_state = state.upper().strip()
+
+    return {
+        source_id: entry.to_dict()
+        for source_id, entry in SOURCE_REGISTRY.items()
+        if (entry.state or "").upper() == normalized_state
+    }
+
+
+def get_sources_by_county(
+    county: str,
+    state: str | None = None,
+) -> dict[str, dict[str, Any]]:
+    """
+    Return registered sources by county and optional state.
+    """
+
+    normalized_county = county.lower().strip()
+    normalized_state = state.upper().strip() if state else None
+
+    results: dict[str, dict[str, Any]] = {}
+
+    for source_id, entry in SOURCE_REGISTRY.items():
+        entry_county = (entry.county or "").lower().strip()
+        entry_state = (entry.state or "").upper().strip()
+
+        if entry_county != normalized_county:
+            continue
+
+        if normalized_state and entry_state != normalized_state:
+            continue
+
+        results[source_id] = entry.to_dict()
+
+    return results
+
+
+def get_source_group(
+    group_name: str,
+) -> dict[str, dict[str, Any]]:
+    """
+    Return all sources in a named source group.
+    """
+
+    source_ids = SOURCE_GROUPS.get(group_name, [])
+
+    return {
+        source_id: SOURCE_REGISTRY[source_id].to_dict()
+        for source_id in source_ids
+        if source_id in SOURCE_REGISTRY
+    }
+
+
+def get_all_source_groups() -> dict[str, list[str]]:
+    """
+    Return source group mapping.
+    """
+
+    return {
+        group_name: list(source_ids)
+        for group_name, source_ids in SOURCE_GROUPS.items()
     }
 
 
 # ============================================================
-# SECTION 35 - PUBLIC EXPORTS
+# SECTION 13 - CLAIM GOVERNANCE FUNCTIONS
+# ============================================================
+
+def get_sources_for_claim(
+    claim_type: SourceClaimType | str,
+) -> dict[str, dict[str, Any]]:
+    """
+    Return sources that may support a claim type.
+    """
+
+    claim_value = (
+        claim_type.value
+        if isinstance(claim_type, SourceClaimType)
+        else str(claim_type)
+    )
+
+    source_ids = CLAIM_SOURCE_GOVERNANCE.get(claim_value, [])
+
+    return {
+        source_id: SOURCE_REGISTRY[source_id].to_dict()
+        for source_id in source_ids
+        if source_id in SOURCE_REGISTRY
+    }
+
+
+def can_source_support_claim(
+    source_id: str,
+    claim_type: SourceClaimType | str,
+) -> bool:
+    """
+    Return whether a source can support a claim type.
+    """
+
+    entry = get_source_entry(source_id)
+
+    if entry is None:
+        return False
+
+    claim_value = (
+        claim_type.value
+        if isinstance(claim_type, SourceClaimType)
+        else str(claim_type)
+    )
+
+    return entry.supports_claim(claim_value)
+
+
+def is_claim_public_record_safe(
+    claim_type: SourceClaimType | str,
+) -> bool:
+    """
+    Return whether public records can reasonably support a claim.
+    """
+
+    claim_value = (
+        claim_type.value
+        if isinstance(claim_type, SourceClaimType)
+        else str(claim_type)
+    )
+
+    return claim_value not in CLAIMS_PUBLIC_RECORDS_CANNOT_PROVE
+
+
+def requires_listing_source(
+    claim_type: SourceClaimType | str,
+) -> bool:
+    """
+    Return whether a claim requires listing feed support.
+    """
+
+    claim_value = (
+        claim_type.value
+        if isinstance(claim_type, SourceClaimType)
+        else str(claim_type)
+    )
+
+    return claim_value in CLAIMS_PUBLIC_RECORDS_CANNOT_PROVE
+
+
+def get_unsupported_public_record_claims() -> list[str]:
+    """
+    Return claims that public records cannot prove.
+    """
+
+    return list(CLAIMS_PUBLIC_RECORDS_CANNOT_PROVE)
+
+
+# ============================================================
+# SECTION 14 - REGISTRY VALIDATION
+# ============================================================
+
+def validate_all_sources() -> SourceValidationReport:
+    """
+    Validate all source registry entries.
+    """
+
+    issues: list[SourceValidationIssue] = []
+
+    for source_id, entry in SOURCE_REGISTRY.items():
+        report = validate_registry_entry(entry)
+
+        for issue in report.issues:
+            issues.append(issue)
+
+        if not entry.mock_data_allowed:
+            continue
+
+        issues.append(
+            SourceValidationIssue(
+                issue_code="mock_data_enabled",
+                message=(
+                    f"Source {source_id} has mock_data_allowed=True, "
+                    "which violates real-data-first registry rules."
+                ),
+                severity="critical",
+                source_id=source_id,
+                manual_review_required=True,
+            )
+        )
+
+    return SourceValidationReport(
+        valid=not issues,
+        issues=issues,
+    )
+
+
+def get_registry_integrity_report() -> dict[str, Any]:
+    """
+    Return complete source registry integrity report.
+    """
+
+    validation_report = validate_all_sources()
+
+    status_counts: dict[str, int] = {}
+    type_counts: dict[str, int] = {}
+    reliability_counts: dict[str, int] = {}
+
+    for entry in SOURCE_REGISTRY.values():
+        status_counts[entry.status] = status_counts.get(entry.status, 0) + 1
+        type_counts[entry.source_type] = type_counts.get(entry.source_type, 0) + 1
+        reliability_counts[entry.reliability] = (
+            reliability_counts.get(entry.reliability, 0) + 1
+        )
+
+    return {
+        "metadata": get_source_registry_metadata(),
+        "valid": validation_report.valid,
+        "issues": [
+            issue.to_dict()
+            for issue in validation_report.issues
+        ],
+        "status_counts": status_counts,
+        "type_counts": type_counts,
+        "reliability_counts": reliability_counts,
+        "mock_sources_allowed": REGISTRY_OPERATING_RULES[
+            "mock_sources_allowed"
+        ],
+        "mock_homes_allowed": REGISTRY_OPERATING_RULES[
+            "mock_homes_allowed"
+        ],
+        "listing_source_required_for_active_status": REGISTRY_OPERATING_RULES[
+            "mls_or_listing_feed_required_for_active_status"
+        ],
+        "generated_at": utc_now(),
+    }
+
+
+# ============================================================
+# SECTION 15 - MORRIS COUNTY STARTER SOURCE FUNCTIONS
+# ============================================================
+
+def get_morris_county_sources() -> dict[str, dict[str, Any]]:
+    """
+    Return Morris County source set.
+    """
+
+    return get_source_group("morris_county_public_records")
+
+
+def get_new_jersey_state_sources() -> dict[str, dict[str, Any]]:
+    """
+    Return New Jersey statewide source set.
+    """
+
+    return get_source_group("new_jersey_statewide_public_records")
+
+
+def get_initial_real_data_sources() -> dict[str, dict[str, Any]]:
+    """
+    Return initial real-data source set for the first build.
+    """
+
+    initial_ids = [
+        "nj_morris_tax_board",
+        "nj_morris_county_clerk_property_records",
+        "nj_morris_gis_parcel_searcher",
+        "nj_state_parcels_modiv_composite",
+    ]
+
+    return {
+        source_id: SOURCE_REGISTRY[source_id].to_dict()
+        for source_id in initial_ids
+        if source_id in SOURCE_REGISTRY
+    }
+
+
+def get_listing_status_sources() -> dict[str, dict[str, Any]]:
+    """
+    Return sources that may support active listing status.
+    """
+
+    return get_source_group("future_listing_status_sources")
+
+
+def get_public_record_source_status_summary() -> dict[str, Any]:
+    """
+    Return high-level public-record source summary.
+    """
+
+    public_source_ids = [
+        "nj_morris_tax_board",
+        "nj_morris_county_clerk_property_records",
+        "nj_morris_gis_parcel_searcher",
+        "nj_state_parcels_modiv_composite",
+    ]
+
+    return {
+        "public_record_sources": {
+            source_id: SOURCE_REGISTRY[source_id].status
+            for source_id in public_source_ids
+            if source_id in SOURCE_REGISTRY
+        },
+        "can_support": [
+            SourceClaimType.TAX_ASSESSMENT.value,
+            SourceClaimType.PROPERTY_TAX.value,
+            SourceClaimType.PARCEL_IDENTITY.value,
+            SourceClaimType.DEED_REFERENCE.value,
+            SourceClaimType.SALE_HISTORY.value,
+            SourceClaimType.ADDRESS_IDENTITY.value,
+        ],
+        "cannot_support_without_listing_feed": get_unsupported_public_record_claims(),
+        "generated_at": utc_now(),
+    }
+
+
+# ============================================================
+# SECTION 16 - REGISTRY SEARCH FUNCTIONS
+# ============================================================
+
+def search_sources(
+    query: str,
+) -> dict[str, dict[str, Any]]:
+    """
+    Search source registry by text.
+    """
+
+    normalized_query = query.lower().strip()
+
+    if not normalized_query:
+        return {}
+
+    results: dict[str, dict[str, Any]] = {}
+
+    for source_id, entry in SOURCE_REGISTRY.items():
+        haystack = " ".join(
+            [
+                source_id,
+                entry.display_name,
+                entry.source_type,
+                entry.status,
+                entry.reliability,
+                entry.jurisdiction or "",
+                entry.state or "",
+                entry.county or "",
+                entry.municipality or "",
+                " ".join(entry.expected_claims),
+                " ".join(entry.notes),
+            ]
+        ).lower()
+
+        if normalized_query in haystack:
+            results[source_id] = entry.to_dict()
+
+    return results
+
+
+def list_source_ids() -> list[str]:
+    """
+    Return all source IDs.
+    """
+
+    return list(SOURCE_REGISTRY.keys())
+
+
+def list_source_display_names() -> dict[str, str]:
+    """
+    Return source ID to display-name mapping.
+    """
+
+    return {
+        source_id: entry.display_name
+        for source_id, entry in SOURCE_REGISTRY.items()
+    }
+
+
+# ============================================================
+# SECTION 17 - DASHBOARD / API SERIALIZATION
+# ============================================================
+
+def get_source_registry_dashboard_payload() -> dict[str, Any]:
+    """
+    Return source registry payload suitable for dashboard/API use.
+    """
+
+    return {
+        "registry": get_source_registry_metadata(),
+        "integrity": get_registry_integrity_report(),
+        "initial_sources": get_initial_real_data_sources(),
+        "morris_county_sources": get_morris_county_sources(),
+        "new_jersey_state_sources": get_new_jersey_state_sources(),
+        "listing_status_sources": get_listing_status_sources(),
+        "public_record_summary": get_public_record_source_status_summary(),
+        "groups": get_all_source_groups(),
+        "operating_rules": REGISTRY_OPERATING_RULES,
+        "generated_at": utc_now(),
+    }
+
+
+# ============================================================
+# SECTION 18 - MODULE HEALTH
+# ============================================================
+
+def get_source_registry_health() -> dict[str, Any]:
+    """
+    Return lightweight source registry health.
+    """
+
+    validation_report = validate_all_sources()
+
+    return {
+        "name": SOURCE_REGISTRY_NAME,
+        "version": SOURCE_REGISTRY_VERSION,
+        "phase": SOURCE_REGISTRY_PHASE,
+        "status": SOURCE_REGISTRY_STATUS,
+        "source_count": len(SOURCE_REGISTRY),
+        "source_group_count": len(SOURCE_GROUPS),
+        "claim_governance_count": len(CLAIM_SOURCE_GOVERNANCE),
+        "valid": validation_report.valid,
+        "issue_count": len(validation_report.issues),
+        "mock_data_allowed": REGISTRY_OPERATING_RULES[
+            "mock_sources_allowed"
+        ],
+        "generated_at": utc_now(),
+    }
+
+
+# ============================================================
+# SECTION 19 - PUBLIC EXPORTS
 # ============================================================
 
 __all__ = [
-    "SOURCE_MODELS_NAME",
-    "SOURCE_MODELS_VERSION",
-    "SOURCE_MODELS_PHASE",
-    "SOURCE_MODELS_STATUS",
-    "SourceType",
-    "SourceStatus",
-    "SourceReliability",
-    "SourceAccessMethod",
-    "SourceDataFormat",
-    "SourceClaimType",
-    "SourceConfidenceBand",
-    "SourceErrorType",
-    "SourceFreshness",
-    "SourceAccessPolicy",
-    "SourceAttribution",
-    "SourceTimestamp",
-    "SourceError",
-    "SourceWarning",
-    "SourceQuery",
-    "SourceField",
-    "SourceRecordReference",
-    "SourceConfidenceReport",
-    "SourceResult",
-    "SourceConnectorCapability",
-    "SourceRequestPolicy",
-    "SourceRegistryEntry",
-    "SourceValidationIssue",
-    "SourceValidationReport",
-    "SourceBatchResult",
-    "SourceFact",
-    "SourceMergeReport",
-    "SOURCE_MODEL_REGISTRY",
+    "SOURCE_REGISTRY_NAME",
+    "SOURCE_REGISTRY_VERSION",
+    "SOURCE_REGISTRY_PHASE",
+    "SOURCE_REGISTRY_STATUS",
+    "SOURCE_REGISTRY_DESCRIPTION",
+    "REGISTRY_OPERATING_RULES",
+    "PUBLIC_PORTAL_POLICY",
+    "GIS_SERVICE_POLICY",
+    "DOWNLOADABLE_DATASET_POLICY",
+    "LICENSED_FEED_POLICY",
+    "NJ_MORRIS_TAX_BOARD",
+    "NJ_MORRIS_COUNTY_CLERK",
+    "NJ_MORRIS_GIS_PARCEL_SEARCHER",
+    "NJ_STATE_PARCELS_MODIV",
+    "MLS_RESO_FUTURE",
+    "BROKER_FEED_FUTURE",
+    "FEMA_FLOOD_FUTURE",
+    "SCHOOL_DATA_FUTURE",
+    "SOURCE_REGISTRY",
+    "SOURCE_GROUPS",
+    "CLAIM_SOURCE_GOVERNANCE",
+    "CLAIMS_PUBLIC_RECORDS_CANNOT_PROVE",
+    "capability",
     "utc_now",
-    "stable_hash",
-    "clamp_confidence",
-    "confidence_band",
-    "safe_string",
-    "normalize_key",
-    "validate_registry_entry",
-    "validate_source_result",
-    "make_source_query",
-    "make_source_error",
-    "make_empty_source_result",
-    "get_source_models_metadata",
-    "get_source_model_names",
-    "get_source_enum_summary",
+    "get_source_registry_metadata",
+    "get_all_sources",
+    "get_source_entry",
+    "get_source",
+    "source_exists",
+    "get_sources_by_type",
+    "get_sources_by_status",
+    "get_sources_by_state",
+    "get_sources_by_county",
+    "get_source_group",
+    "get_all_source_groups",
+    "get_sources_for_claim",
+    "can_source_support_claim",
+    "is_claim_public_record_safe",
+    "requires_listing_source",
+    "get_unsupported_public_record_claims",
+    "validate_all_sources",
+    "get_registry_integrity_report",
+    "get_morris_county_sources",
+    "get_new_jersey_state_sources",
+    "get_initial_real_data_sources",
+    "get_listing_status_sources",
+    "get_public_record_source_status_summary",
+    "search_sources",
+    "list_source_ids",
+    "list_source_display_names",
+    "get_source_registry_dashboard_payload",
+    "get_source_registry_health",
 ]
 
 
