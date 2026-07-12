@@ -1,16 +1,19 @@
 # ============================================================
 # AUSSEM1
-# PHASE 1.00 PART 9.07
-# ENTERPRISE VISUAL APPLICATION ENTRY POINT
+# PHASE 2.40 PART 1.02
+# ENTERPRISE APPLICATION ENTRY POINT WITH PROPERTY INTELLIGENCE ROUTING
 # FILE: main.py
 # PURPOSE:
 # Bootstrap the complete Aussem1 FastAPI application with:
 # - root dashboard redirect
 # - static file serving
 # - dashboard routing
-# - router registration
+# - chatbot routing
+# - public records readiness visibility
+# - property intelligence route registration
 # - health checks
 # - diagnostics
+# - route registry
 # - fallback visual dashboard support
 # - Render deployment readiness
 #
@@ -21,7 +24,7 @@
 # Alfred
 #
 # STATUS:
-# ENTERPRISE VISUAL APPLICATION ACTIVE
+# ENTERPRISE APPLICATION ACTIVE WITH PROPERTY INTELLIGENCE ROUTING
 # ============================================================
 
 
@@ -50,17 +53,23 @@ from fastapi.staticfiles import StaticFiles
 
 PLATFORM_NAME = "Aussem1"
 
-PLATFORM_VERSION = "0.2.1"
+PLATFORM_VERSION = "0.2.2"
 
-PLATFORM_PHASE = "PHASE 1.00 PART 9.07"
+PLATFORM_PHASE = "PHASE 2.40 PART 1.02"
 
-PLATFORM_STATUS = "enterprise_visual_application_active"
+PLATFORM_STATUS = "enterprise_application_property_intelligence_routing_active"
 
 PLATFORM_DESCRIPTION = (
     "Aussem1 is an AI-first residential real estate intelligence "
-    "platform designed to turn one property address into complete "
-    "real estate intelligence."
+    "platform designed to turn one property address into complete, "
+    "source-backed real estate intelligence."
 )
+
+PLATFORM_ENVIRONMENT = "development"
+
+PLATFORM_OWNER = "Ryan Schuren"
+
+PLATFORM_ASSISTANT = "Alfred"
 
 
 # ============================================================
@@ -81,11 +90,41 @@ TEMPLATE_DIRECTORY = APP_DIRECTORY / "templates"
 
 DATA_DIRECTORY = APP_DIRECTORY / "data"
 
+WEB_DIRECTORY = APP_DIRECTORY / "web"
+
+PUBLIC_RECORDS_DIRECTORY = APP_DIRECTORY / "public_records"
+
+PROPERTY_INTELLIGENCE_DIRECTORY = APP_DIRECTORY / "property_intelligence"
+
 DASHBOARD_TEMPLATE = TEMPLATE_DIRECTORY / "dashboard.html"
 
 DASHBOARD_CSS = STATIC_CSS_DIRECTORY / "dashboard.css"
 
 DASHBOARD_JS = STATIC_JS_DIRECTORY / "dashboard.js"
+
+WEB_ROUTES_FILE = WEB_DIRECTORY / "routes.py"
+
+PROPERTY_ROUTES_FILE = WEB_DIRECTORY / "property_routes.py"
+
+PUBLIC_RECORDS_ENGINE_FILE = PUBLIC_RECORDS_DIRECTORY / "public_records_engine.py"
+
+PROPERTY_INTELLIGENCE_MODELS_FILE = PROPERTY_INTELLIGENCE_DIRECTORY / "models.py"
+
+PROPERTY_INTELLIGENCE_ADDRESS_FILE = (
+    PROPERTY_INTELLIGENCE_DIRECTORY / "address_intelligence.py"
+)
+
+PROPERTY_INTELLIGENCE_CONFIDENCE_FILE = (
+    PROPERTY_INTELLIGENCE_DIRECTORY / "confidence_engine.py"
+)
+
+PROPERTY_INTELLIGENCE_SOURCE_EXPLANATION_FILE = (
+    PROPERTY_INTELLIGENCE_DIRECTORY / "source_explanation_engine.py"
+)
+
+PROPERTY_INTELLIGENCE_PROFILE_FILE = (
+    PROPERTY_INTELLIGENCE_DIRECTORY / "property_profile_engine.py"
+)
 
 
 # ============================================================
@@ -103,11 +142,13 @@ def create_application() -> FastAPI:
         description=PLATFORM_DESCRIPTION,
     )
 
+    initialize_application_state(application)
     ensure_runtime_directories()
     register_lifecycle_events(application)
     register_exception_handlers(application)
     register_static_files(application)
     register_web_router(application)
+    register_property_router(application)
     register_core_routes(application)
     register_fallback_visual_routes(application)
 
@@ -115,7 +156,34 @@ def create_application() -> FastAPI:
 
 
 # ============================================================
-# SECTION 05 - RUNTIME DIRECTORY CREATION
+# SECTION 05 - APPLICATION STATE INITIALIZATION
+# ============================================================
+
+def initialize_application_state(application: FastAPI) -> None:
+    """
+    Initialize runtime state flags before router registration.
+
+    These flags are intentionally explicit so diagnostics can show
+    exactly what loaded and exactly what failed.
+    """
+
+    application.state.web_router_loaded = False
+    application.state.web_router_error = None
+
+    application.state.property_router_loaded = False
+    application.state.property_router_error = None
+
+    application.state.public_records_engine_available = False
+    application.state.public_records_engine_error = None
+
+    application.state.property_intelligence_models_available = False
+    application.state.property_intelligence_models_error = None
+
+    application.state.started_at = datetime.now(UTC).isoformat()
+
+
+# ============================================================
+# SECTION 06 - RUNTIME DIRECTORY CREATION
 # ============================================================
 
 def ensure_runtime_directories() -> None:
@@ -129,10 +197,75 @@ def ensure_runtime_directories() -> None:
     STATIC_JS_DIRECTORY.mkdir(parents=True, exist_ok=True)
     TEMPLATE_DIRECTORY.mkdir(parents=True, exist_ok=True)
     DATA_DIRECTORY.mkdir(parents=True, exist_ok=True)
+    WEB_DIRECTORY.mkdir(parents=True, exist_ok=True)
+    PUBLIC_RECORDS_DIRECTORY.mkdir(parents=True, exist_ok=True)
+    PROPERTY_INTELLIGENCE_DIRECTORY.mkdir(parents=True, exist_ok=True)
 
 
 # ============================================================
-# SECTION 06 - LIFECYCLE EVENTS
+# SECTION 07 - TIME AND SERIALIZATION UTILITIES
+# ============================================================
+
+def utc_now() -> str:
+    """
+    Return current UTC timestamp.
+    """
+
+    return datetime.now(UTC).isoformat()
+
+
+def path_status(path: Path) -> dict[str, Any]:
+    """
+    Return standardized file/path status.
+    """
+
+    return {
+        "path": str(path),
+        "exists": path.exists(),
+        "is_file": path.is_file(),
+        "is_directory": path.is_dir(),
+    }
+
+
+def safe_import_status(
+    *,
+    module_name: str,
+    attribute_name: str | None = None,
+) -> dict[str, Any]:
+    """
+    Safely check whether a module or module attribute can be imported.
+    """
+
+    try:
+        module = __import__(module_name, fromlist=[attribute_name] if attribute_name else [])
+    except Exception as error:
+        return {
+            "module": module_name,
+            "attribute": attribute_name,
+            "available": False,
+            "error": str(error),
+        }
+
+    if attribute_name:
+        available = hasattr(module, attribute_name)
+
+        return {
+            "module": module_name,
+            "attribute": attribute_name,
+            "available": available,
+            "error": None if available else f"Missing attribute: {attribute_name}",
+        }
+
+    return {
+        "module": module_name,
+        "attribute": attribute_name,
+        "available": True,
+        "error": None,
+    }
+
+
+# ============================================================
+# SECTION 08 - LIFECYCLE EVENTS
 # ============================================================
 
 def register_lifecycle_events(application: FastAPI) -> None:
@@ -154,6 +287,9 @@ def register_lifecycle_events(application: FastAPI) -> None:
         print(f"project_root: {PROJECT_ROOT}")
         print(f"dashboard_template_exists: {DASHBOARD_TEMPLATE.exists()}")
         print(f"dashboard_css_exists: {DASHBOARD_CSS.exists()}")
+        print(f"dashboard_js_exists: {DASHBOARD_JS.exists()}")
+        print(f"web_router_loaded: {application.state.web_router_loaded}")
+        print(f"property_router_loaded: {application.state.property_router_loaded}")
         print("=" * 72)
 
     @application.on_event("shutdown")
@@ -166,7 +302,7 @@ def register_lifecycle_events(application: FastAPI) -> None:
 
 
 # ============================================================
-# SECTION 07 - EXCEPTION HANDLERS
+# SECTION 09 - EXCEPTION HANDLERS
 # ============================================================
 
 def register_exception_handlers(application: FastAPI) -> None:
@@ -193,13 +329,13 @@ def register_exception_handlers(application: FastAPI) -> None:
                 "message": "Unexpected Aussem1 platform error.",
                 "path": str(request.url.path),
                 "detail": str(error),
-                "timestamp": datetime.now(UTC).isoformat(),
+                "timestamp": utc_now(),
             },
         )
 
 
 # ============================================================
-# SECTION 08 - STATIC FILE REGISTRATION
+# SECTION 10 - STATIC FILE REGISTRATION
 # ============================================================
 
 def register_static_files(application: FastAPI) -> None:
@@ -215,16 +351,19 @@ def register_static_files(application: FastAPI) -> None:
 
 
 # ============================================================
-# SECTION 09 - WEB ROUTER REGISTRATION
+# SECTION 11 - WEB ROUTER REGISTRATION
 # ============================================================
 
 def register_web_router(application: FastAPI) -> None:
     """
-    Register the enterprise web router.
+    Register the general enterprise web router.
 
-    Important:
-    This should register /dashboard, /chat, /api/dashboard/status,
-    and related visual/API endpoints.
+    Expected ownership:
+    - /dashboard
+    - /chat
+    - /api/dashboard/status
+    - /web/readiness
+    - visual dashboard API support
     """
 
     try:
@@ -246,7 +385,44 @@ def register_web_router(application: FastAPI) -> None:
 
 
 # ============================================================
-# SECTION 10 - CORE ROUTES
+# SECTION 12 - PROPERTY ROUTER REGISTRATION
+# ============================================================
+
+def register_property_router(application: FastAPI) -> None:
+    """
+    Register the dedicated property intelligence router.
+
+    Expected ownership:
+    - /properties
+    - /properties/health
+    - /properties/readiness
+    - /properties/diagnostics
+    - /properties/address/analyze
+    - /properties/profile/build
+    - /properties/confidence/evaluate
+    - /properties/explain
+    """
+
+    try:
+        from app.web.property_routes import router as property_router
+
+        application.include_router(property_router)
+
+        application.state.property_router_loaded = True
+        application.state.property_router_error = None
+
+    except Exception as error:
+        application.state.property_router_loaded = False
+        application.state.property_router_error = str(error)
+
+        print("=" * 72)
+        print(f"{PLATFORM_NAME} property router registration failed")
+        print(str(error))
+        print("=" * 72)
+
+
+# ============================================================
+# SECTION 13 - CORE ROUTES
 # ============================================================
 
 def register_core_routes(application: FastAPI) -> None:
@@ -255,7 +431,7 @@ def register_core_routes(application: FastAPI) -> None:
     """
 
     # --------------------------------------------------------
-    # SECTION 10.01 - ROOT DASHBOARD REDIRECT
+    # SECTION 13.01 - ROOT DASHBOARD REDIRECT
     # --------------------------------------------------------
 
     @application.get("/")
@@ -270,7 +446,7 @@ def register_core_routes(application: FastAPI) -> None:
         )
 
     # --------------------------------------------------------
-    # SECTION 10.02 - HEALTH CHECK
+    # SECTION 13.02 - HEALTH CHECK
     # --------------------------------------------------------
 
     @application.get("/health")
@@ -288,11 +464,13 @@ def register_core_routes(application: FastAPI) -> None:
             "dashboard": "/dashboard",
             "health": "/health",
             "routes": "/routes",
-            "timestamp": datetime.now(UTC).isoformat(),
+            "property_health": "/properties/health",
+            "property_readiness": "/properties/readiness",
+            "timestamp": utc_now(),
         }
 
     # --------------------------------------------------------
-    # SECTION 10.03 - PLATFORM METADATA
+    # SECTION 13.03 - PLATFORM METADATA
     # --------------------------------------------------------
 
     @application.get("/platform")
@@ -306,37 +484,46 @@ def register_core_routes(application: FastAPI) -> None:
             "version": PLATFORM_VERSION,
             "phase": PLATFORM_PHASE,
             "status": PLATFORM_STATUS,
+            "environment": PLATFORM_ENVIRONMENT,
+            "owner": PLATFORM_OWNER,
+            "assistant": PLATFORM_ASSISTANT,
             "description": PLATFORM_DESCRIPTION,
             "core_mission": (
                 "Turn one property address into complete residential "
-                "real estate intelligence."
+                "real estate intelligence with strict source attribution."
             ),
             "active_systems": [
                 "FastAPI Runtime",
                 "Static File Serving",
                 "Template Dashboard",
-                "Web Router",
+                "General Web Router",
                 "Chatbot API",
                 "Memory Store",
                 "Training Logger",
                 "Prompt Registry",
                 "Dashboard Diagnostics",
+                "Public Records Connector Foundation",
+                "Public Records Engine Foundation",
+                "Property Intelligence Model Layer",
+                "Property Intelligence HTTP Router",
             ],
             "planned_systems": [
-                "Property Lookup Engine",
-                "Public Records Engine",
+                "Address Intelligence Engine",
+                "Confidence Engine",
+                "Source Explanation Engine",
+                "Property Profile Engine",
+                "Authorized MLS / RESO Feed",
                 "Comparable Analysis Engine",
                 "Valuation Engine",
-                "Market Intelligence Engine",
                 "PostgreSQL Persistence",
                 "Review Dashboard",
                 "Machine Learning Operations",
             ],
-            "timestamp": datetime.now(UTC).isoformat(),
+            "timestamp": utc_now(),
         }
 
     # --------------------------------------------------------
-    # SECTION 10.04 - AI STATUS
+    # SECTION 13.04 - AI STATUS
     # --------------------------------------------------------
 
     @application.get("/ai/status")
@@ -354,18 +541,33 @@ def register_core_routes(application: FastAPI) -> None:
             "training_logger": "active",
             "prompt_registry": "active",
             "dashboard": "active",
-            "property_reasoning": "planned",
+            "public_records_engine": (
+                "foundation_active"
+                if PUBLIC_RECORDS_ENGINE_FILE.exists()
+                else "missing"
+            ),
+            "property_intelligence_models": (
+                "active"
+                if PROPERTY_INTELLIGENCE_MODELS_FILE.exists()
+                else "missing"
+            ),
+            "property_router": (
+                "active"
+                if getattr(application.state, "property_router_loaded", False)
+                else "not_loaded"
+            ),
             "valuation_engine": "planned",
-            "public_records_engine": "planned",
+            "authorized_listing_feed": "not_connected",
             "message": (
                 "Aussem1 AI foundation is online with visual dashboard, "
-                "chat routing, memory, training logging, and prompt governance."
+                "chat routing, public-record foundations, property model "
+                "contracts, and route-level property intelligence support."
             ),
-            "timestamp": datetime.now(UTC).isoformat(),
+            "timestamp": utc_now(),
         }
 
     # --------------------------------------------------------
-    # SECTION 10.05 - STATIC STATUS
+    # SECTION 13.05 - STATIC STATUS
     # --------------------------------------------------------
 
     @application.get("/static/status")
@@ -384,11 +586,11 @@ def register_core_routes(application: FastAPI) -> None:
             "dashboard_css_exists": DASHBOARD_CSS.exists(),
             "dashboard_js": str(DASHBOARD_JS),
             "dashboard_js_exists": DASHBOARD_JS.exists(),
-            "timestamp": datetime.now(UTC).isoformat(),
+            "timestamp": utc_now(),
         }
 
     # --------------------------------------------------------
-    # SECTION 10.06 - TEMPLATE STATUS
+    # SECTION 13.06 - TEMPLATE STATUS
     # --------------------------------------------------------
 
     @application.get("/templates/status")
@@ -404,11 +606,65 @@ def register_core_routes(application: FastAPI) -> None:
             "template_directory_exists": TEMPLATE_DIRECTORY.exists(),
             "dashboard_template": str(DASHBOARD_TEMPLATE),
             "dashboard_template_exists": DASHBOARD_TEMPLATE.exists(),
-            "timestamp": datetime.now(UTC).isoformat(),
+            "timestamp": utc_now(),
         }
 
     # --------------------------------------------------------
-    # SECTION 10.07 - FULL DIAGNOSTICS
+    # SECTION 13.07 - PROPERTY INTELLIGENCE STATUS
+    # --------------------------------------------------------
+
+    @application.get("/property-intelligence/status")
+    def property_intelligence_status() -> dict[str, Any]:
+        """
+        Return property-intelligence filesystem and import status.
+        """
+
+        return {
+            "platform": PLATFORM_NAME,
+            "phase": PLATFORM_PHASE,
+            "status": "active",
+            "router": {
+                "loaded": getattr(application.state, "property_router_loaded", False),
+                "error": getattr(application.state, "property_router_error", None),
+                "file": path_status(PROPERTY_ROUTES_FILE),
+            },
+            "files": {
+                "property_models": path_status(PROPERTY_INTELLIGENCE_MODELS_FILE),
+                "address_intelligence": path_status(PROPERTY_INTELLIGENCE_ADDRESS_FILE),
+                "confidence_engine": path_status(PROPERTY_INTELLIGENCE_CONFIDENCE_FILE),
+                "source_explanation_engine": path_status(
+                    PROPERTY_INTELLIGENCE_SOURCE_EXPLANATION_FILE
+                ),
+                "property_profile_engine": path_status(
+                    PROPERTY_INTELLIGENCE_PROFILE_FILE
+                ),
+                "public_records_engine": path_status(PUBLIC_RECORDS_ENGINE_FILE),
+            },
+            "imports": {
+                "property_models": safe_import_status(
+                    module_name="app.property_intelligence.models"
+                ),
+                "public_records_engine": safe_import_status(
+                    module_name="app.public_records.public_records_engine"
+                ),
+                "property_routes": safe_import_status(
+                    module_name="app.web.property_routes",
+                    attribute_name="router",
+                ),
+            },
+            "governance": {
+                "mock_properties_allowed": False,
+                "fabricated_listing_status_allowed": False,
+                "fabricated_property_values_allowed": False,
+                "public_records_are_not_listing_status": True,
+                "listing_status_requires_authorized_feed": True,
+                "assessment_is_not_market_value": True,
+            },
+            "timestamp": utc_now(),
+        }
+
+    # --------------------------------------------------------
+    # SECTION 13.08 - FULL DIAGNOSTICS
     # --------------------------------------------------------
 
     @application.get("/diagnostics")
@@ -422,9 +678,24 @@ def register_core_routes(application: FastAPI) -> None:
             "version": PLATFORM_VERSION,
             "phase": PLATFORM_PHASE,
             "status": PLATFORM_STATUS,
+            "started_at": getattr(application.state, "started_at", None),
             "web_router": {
                 "loaded": getattr(application.state, "web_router_loaded", False),
                 "error": getattr(application.state, "web_router_error", None),
+                "file": path_status(WEB_ROUTES_FILE),
+            },
+            "property_router": {
+                "loaded": getattr(
+                    application.state,
+                    "property_router_loaded",
+                    False,
+                ),
+                "error": getattr(
+                    application.state,
+                    "property_router_error",
+                    None,
+                ),
+                "file": path_status(PROPERTY_ROUTES_FILE),
             },
             "paths": {
                 "project_root": str(PROJECT_ROOT),
@@ -434,9 +705,19 @@ def register_core_routes(application: FastAPI) -> None:
                 "static_js_directory": str(STATIC_JS_DIRECTORY),
                 "template_directory": str(TEMPLATE_DIRECTORY),
                 "data_directory": str(DATA_DIRECTORY),
+                "web_directory": str(WEB_DIRECTORY),
+                "public_records_directory": str(PUBLIC_RECORDS_DIRECTORY),
+                "property_intelligence_directory": str(
+                    PROPERTY_INTELLIGENCE_DIRECTORY
+                ),
                 "dashboard_template": str(DASHBOARD_TEMPLATE),
                 "dashboard_css": str(DASHBOARD_CSS),
                 "dashboard_js": str(DASHBOARD_JS),
+                "property_routes": str(PROPERTY_ROUTES_FILE),
+                "public_records_engine": str(PUBLIC_RECORDS_ENGINE_FILE),
+                "property_intelligence_models": str(
+                    PROPERTY_INTELLIGENCE_MODELS_FILE
+                ),
             },
             "exists": {
                 "project_root": PROJECT_ROOT.exists(),
@@ -446,19 +727,29 @@ def register_core_routes(application: FastAPI) -> None:
                 "static_js_directory": STATIC_JS_DIRECTORY.exists(),
                 "template_directory": TEMPLATE_DIRECTORY.exists(),
                 "data_directory": DATA_DIRECTORY.exists(),
+                "web_directory": WEB_DIRECTORY.exists(),
+                "public_records_directory": PUBLIC_RECORDS_DIRECTORY.exists(),
+                "property_intelligence_directory": (
+                    PROPERTY_INTELLIGENCE_DIRECTORY.exists()
+                ),
                 "dashboard_template": DASHBOARD_TEMPLATE.exists(),
                 "dashboard_css": DASHBOARD_CSS.exists(),
                 "dashboard_js": DASHBOARD_JS.exists(),
+                "property_routes": PROPERTY_ROUTES_FILE.exists(),
+                "public_records_engine": PUBLIC_RECORDS_ENGINE_FILE.exists(),
+                "property_intelligence_models": (
+                    PROPERTY_INTELLIGENCE_MODELS_FILE.exists()
+                ),
             },
             "render": {
                 "build_command": "pip install -r requirements.txt",
                 "start_command": "uvicorn main:app --host 0.0.0.0 --port $PORT",
             },
-            "timestamp": datetime.now(UTC).isoformat(),
+            "timestamp": utc_now(),
         }
 
     # --------------------------------------------------------
-    # SECTION 10.08 - ENTERPRISE ROUTE REGISTRY
+    # SECTION 13.09 - ENTERPRISE ROUTE REGISTRY
     # --------------------------------------------------------
 
     @application.get("/routes")
@@ -477,12 +768,35 @@ def register_core_routes(application: FastAPI) -> None:
                 "behavior": "redirects_to_dashboard",
                 "target": "/dashboard",
             },
+            "router_status": {
+                "web_router_loaded": getattr(
+                    application.state,
+                    "web_router_loaded",
+                    False,
+                ),
+                "web_router_error": getattr(
+                    application.state,
+                    "web_router_error",
+                    None,
+                ),
+                "property_router_loaded": getattr(
+                    application.state,
+                    "property_router_loaded",
+                    False,
+                ),
+                "property_router_error": getattr(
+                    application.state,
+                    "property_router_error",
+                    None,
+                ),
+            },
             "active_routes": {
                 "core": [
                     "/",
                     "/health",
                     "/platform",
                     "/ai/status",
+                    "/property-intelligence/status",
                     "/routes",
                     "/diagnostics",
                     "/static/status",
@@ -491,7 +805,7 @@ def register_core_routes(application: FastAPI) -> None:
                 "visual": [
                     "/dashboard",
                 ],
-                "expected_web_router_routes": [
+                "general_web_router": [
                     "/chat",
                     "/chat/health",
                     "/chat/trace",
@@ -508,6 +822,22 @@ def register_core_routes(application: FastAPI) -> None:
                     "/web/diagnostics",
                     "/web/readiness",
                 ],
+                "property_intelligence_router": [
+                    "/properties",
+                    "/properties/health",
+                    "/properties/readiness",
+                    "/properties/diagnostics",
+                    "/properties/registry/routes",
+                    "/properties/address/analyze",
+                    "/properties/address/compare",
+                    "/properties/profile/build",
+                    "/properties/profile/refresh",
+                    "/properties/profile/merge",
+                    "/properties/confidence/evaluate",
+                    "/properties/explain",
+                    "/properties/batch/profile/build",
+                    "/properties/{property_id}",
+                ],
             },
             "governance": {
                 "rule_1": "Root route must show or redirect to a visual application.",
@@ -516,18 +846,21 @@ def register_core_routes(application: FastAPI) -> None:
                 "rule_4": "Dashboard CSS must live in app/static/css.",
                 "rule_5": "Dashboard JavaScript must live in app/static/js.",
                 "rule_6": "Routes must stay thin and delegate intelligence to service modules.",
+                "rule_7": "Property routes must not fabricate MLS, public-record, or valuation facts.",
+                "rule_8": "Listing status requires authorized listing-source integration.",
+                "rule_9": "Assessment data is not current market value.",
             },
-            "timestamp": datetime.now(UTC).isoformat(),
+            "timestamp": utc_now(),
         }
 
 
 # ============================================================
-# SECTION 11 - FALLBACK VISUAL ROUTES
+# SECTION 14 - FALLBACK VISUAL ROUTES
 # ============================================================
 
 def register_fallback_visual_routes(application: FastAPI) -> None:
     """
-    Register a fallback /dashboard route if the web router failed.
+    Register fallback /dashboard route if the web router failed.
 
     If app.web.routes loads correctly, its /dashboard route is used.
     If it fails, this route still gives the browser a visual screen
@@ -569,7 +902,7 @@ def register_fallback_visual_routes(application: FastAPI) -> None:
                     font-family: Inter, system-ui, sans-serif;
                 }}
                 .card {{
-                    width: min(900px, calc(100% - 40px));
+                    width: min(940px, calc(100% - 40px));
                     padding: 38px;
                     border-radius: 28px;
                     background: rgba(15,23,42,.92);
@@ -601,6 +934,19 @@ def register_fallback_visual_routes(application: FastAPI) -> None:
                     color: #38bdf8;
                     font-weight: 800;
                 }}
+                .grid {{
+                    display: grid;
+                    gap: 12px;
+                    grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+                    margin-top: 22px;
+                }}
+                .pill {{
+                    border: 1px solid rgba(148,163,184,.18);
+                    background: rgba(2,6,23,.55);
+                    border-radius: 16px;
+                    padding: 14px;
+                    color: #cbd5e1;
+                }}
             </style>
         </head>
         <body>
@@ -613,11 +959,20 @@ def register_fallback_visual_routes(application: FastAPI) -> None:
                 </p>
                 <p><strong>Router error:</strong></p>
                 <pre>{error_message}</pre>
-                <p>
-                    Check <a href="/diagnostics">/diagnostics</a>,
-                    <a href="/templates/status">/templates/status</a>,
-                    and <a href="/static/status">/static/status</a>.
-                </p>
+                <div class="grid">
+                    <div class="pill">
+                        <a href="/diagnostics">Diagnostics</a>
+                    </div>
+                    <div class="pill">
+                        <a href="/templates/status">Template Status</a>
+                    </div>
+                    <div class="pill">
+                        <a href="/static/status">Static Status</a>
+                    </div>
+                    <div class="pill">
+                        <a href="/property-intelligence/status">Property Status</a>
+                    </div>
+                </div>
             </main>
         </body>
         </html>
@@ -627,14 +982,14 @@ def register_fallback_visual_routes(application: FastAPI) -> None:
 
 
 # ============================================================
-# SECTION 12 - APPLICATION INSTANCE
+# SECTION 15 - APPLICATION INSTANCE
 # ============================================================
 
 app = create_application()
 
 
 # ============================================================
-# SECTION 13 - LOCAL DEVELOPMENT ENTRY POINT
+# SECTION 16 - LOCAL DEVELOPMENT ENTRY POINT
 # ============================================================
 
 if __name__ == "__main__":
@@ -649,29 +1004,25 @@ if __name__ == "__main__":
 
 
 # ============================================================
-# SECTION 14 - FUTURE EXPANSION NOTES
+# SECTION 17 - OPERATIONAL NOTES
 # ============================================================
 
 #
-# This file now correctly guarantees:
+# This file now guarantees:
 #
 # - / redirects to /dashboard
 # - /health remains Render-safe JSON
 # - /static is mounted
-# - /diagnostics shows whether files exist
-# - /dashboard will always show either the real dashboard or
-#   a visual diagnostic fallback
+# - /diagnostics shows filesystem and router readiness
+# - /property-intelligence/status shows property-intelligence readiness
+# - /properties routes are registered when app/web/property_routes.py imports
+# - /dashboard will always show either the real dashboard or a fallback page
 #
-# Next required checks:
+# Important source-governance rule:
 #
-# - app/templates/dashboard.html must exist.
-# - app/templates/dashboard.html must link:
-#       <link rel="stylesheet" href="/static/css/dashboard.css" />
-# - app/static/css/dashboard.css must exist.
-# - requirements.txt must include:
-#       fastapi
-#       uvicorn
-#       jinja2
+# Public records can support parcel, tax, GIS, MOD-IV, recorded-document,
+# and ownership-reference context. They do not prove active listing status,
+# under-contract status, current listing price, or days on market.
 #
 # ============================================================
 
