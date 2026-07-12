@@ -1,14 +1,22 @@
 /* ============================================================
 AUSSEM1
-PHASE 1.00 PART 9.06
-ENTERPRISE DASHBOARD VISUAL OPERATING SYSTEM
+PHASE 2.40 PART 4.00
+ENTERPRISE PROPERTY INTELLIGENCE VISUAL OPERATING SYSTEM
 FILE: app/static/css/dashboard.css
 PURPOSE:
-Enterprise-grade visual system for the Aussem1 live intelligence
-dashboard, chatbot command center, memory monitor, training monitor,
-property intelligence panels, diagnostics, confidence scoring UI,
-future machine learning operations, and deep learning visualization
-foundation.
+Enterprise-grade visual operating system for the Aussem1 property
+intelligence dashboard.
+
+This stylesheet supports:
+- property intelligence command center
+- real estate AI console
+- public-record source governance
+- property route visibility
+- diagnostics panels
+- training and memory panels
+- source-backed property domains
+- confidence and review UI foundations
+- future valuation, MLS, RESO, IDX, broker-feed, and ML/AI systems
 
 AUTHOR:
 Ryan Schuren
@@ -17,7 +25,7 @@ ASSISTANT:
 Alfred
 
 STATUS:
-ENTERPRISE VISUAL OPERATING SYSTEM ACTIVE
+ENTERPRISE PROPERTY INTELLIGENCE VISUAL SYSTEM ACTIVE
 ============================================================ */
 
 
@@ -27,17 +35,21 @@ SECTION 01 - ENTERPRISE DESIGN TOKENS
 
 :root {
     --color-bg-1000: #00030a;
-    --color-bg-950: #020617;
-    --color-bg-925: #07111f;
+    --color-bg-980: #010714;
+    --color-bg-960: #020617;
+    --color-bg-940: #07111f;
+    --color-bg-920: #0b1324;
     --color-bg-900: #0f172a;
     --color-bg-850: #111827;
     --color-bg-800: #1e293b;
+    --color-bg-750: #273449;
     --color-bg-700: #334155;
 
     --color-panel: rgba(15, 23, 42, 0.92);
     --color-panel-solid: #0f172a;
     --color-panel-soft: rgba(30, 41, 59, 0.74);
-    --color-panel-deep: rgba(2, 6, 23, 0.74);
+    --color-panel-deep: rgba(2, 6, 23, 0.78);
+    --color-panel-faint: rgba(15, 23, 42, 0.48);
     --color-card: rgba(15, 23, 42, 0.76);
     --color-card-hover: rgba(30, 41, 59, 0.88);
 
@@ -60,11 +72,18 @@ SECTION 01 - ENTERPRISE DESIGN TOKENS
     --color-purple-dark: #7c3aed;
     --color-cyan: #67e8f9;
     --color-indigo: #818cf8;
+    --color-white: #ffffff;
 
     --gradient-primary: linear-gradient(135deg, var(--color-blue), var(--color-blue-dark));
     --gradient-green: linear-gradient(135deg, var(--color-green), var(--color-green-dark));
     --gradient-purple: linear-gradient(135deg, var(--color-purple), var(--color-purple-dark));
     --gradient-red: linear-gradient(135deg, var(--color-red), var(--color-red-dark));
+    --gradient-yellow: linear-gradient(135deg, var(--color-yellow), var(--color-orange));
+    --gradient-command:
+        radial-gradient(circle at 10% 0%, rgba(56, 189, 248, 0.24), transparent 30%),
+        radial-gradient(circle at 90% 0%, rgba(167, 139, 250, 0.18), transparent 34%),
+        radial-gradient(circle at 50% 100%, rgba(52, 211, 153, 0.10), transparent 36%),
+        linear-gradient(135deg, var(--color-bg-1000), var(--color-bg-900) 54%, var(--color-bg-960));
     --gradient-glass:
         linear-gradient(135deg, rgba(56, 189, 248, 0.14), transparent 34%),
         linear-gradient(315deg, rgba(167, 139, 250, 0.14), transparent 40%);
@@ -82,6 +101,7 @@ SECTION 01 - ENTERPRISE DESIGN TOKENS
     --shadow-soft: 0 14px 40px rgba(0, 0, 0, 0.26);
     --shadow-blue: 0 18px 60px rgba(37, 99, 235, 0.24);
     --shadow-green: 0 18px 60px rgba(5, 150, 105, 0.20);
+    --shadow-purple: 0 18px 60px rgba(124, 58, 237, 0.20);
 
     --radius-2xl: 40px;
     --radius-xl: 34px;
@@ -144,7 +164,7 @@ SECTION 02 - GLOBAL RESET
 html {
     min-height: 100%;
     scroll-behavior: smooth;
-    background: var(--color-bg-950);
+    background: var(--color-bg-960);
 }
 
 body {
@@ -152,11 +172,7 @@ body {
     min-height: 100vh;
     color: var(--color-text);
     font-family: var(--font-main);
-    background:
-        radial-gradient(circle at 12% 0%, rgba(56, 189, 248, 0.24), transparent 30%),
-        radial-gradient(circle at 86% 5%, rgba(167, 139, 250, 0.20), transparent 32%),
-        radial-gradient(circle at 50% 100%, rgba(52, 211, 153, 0.10), transparent 32%),
-        linear-gradient(135deg, var(--color-bg-1000) 0%, var(--color-bg-900) 52%, var(--color-bg-950) 100%);
+    background: var(--gradient-command);
     overflow-x: hidden;
     text-rendering: optimizeLegibility;
     -webkit-font-smoothing: antialiased;
@@ -182,7 +198,7 @@ body::after {
     z-index: -1;
     pointer-events: none;
     background:
-        linear-gradient(180deg, rgba(2, 6, 23, 0.18), rgba(2, 6, 23, 0.70));
+        linear-gradient(180deg, rgba(2, 6, 23, 0.10), rgba(2, 6, 23, 0.78));
 }
 
 a {
@@ -256,7 +272,7 @@ SECTION 04 - ENTERPRISE NAVIGATION BAR
     padding: 14px 16px;
     border: 1px solid var(--border-soft);
     border-radius: var(--radius-xl);
-    background: rgba(2, 6, 23, 0.76);
+    background: rgba(2, 6, 23, 0.78);
     box-shadow: var(--shadow-soft);
     backdrop-filter: blur(22px);
 }
@@ -439,7 +455,7 @@ h1 {
 }
 
 .hero-copy {
-    max-width: 880px;
+    max-width: 900px;
     color: var(--color-muted);
     font-size: 18px;
     line-height: 1.75;
@@ -765,6 +781,7 @@ pre::-webkit-scrollbar-thumb {
     font-size: 14px;
     line-height: 1.62;
     white-space: pre-wrap;
+    overflow-wrap: anywhere;
 }
 
 .user .bubble {
@@ -783,6 +800,11 @@ pre::-webkit-scrollbar-thumb {
     margin-top: 7px;
     color: var(--color-faint);
     font-size: 11px;
+}
+
+.message-body {
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
 }
 
 .chat-form {
@@ -886,7 +908,7 @@ SECTION 13 - MODULE CARDS
 
 
 /* ============================================================
-SECTION 14 - AI PIPELINE VISUALIZATION
+SECTION 14 - PROPERTY PIPELINE VISUALIZATION
 ============================================================ */
 
 .system-pipeline {
@@ -940,7 +962,121 @@ SECTION 14 - AI PIPELINE VISUALIZATION
 
 
 /* ============================================================
-SECTION 15 - CONFIDENCE AND AI SCORING VISUALS
+SECTION 15 - PROPERTY INTELLIGENCE VISUALS
+============================================================ */
+
+.property-grid {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 14px;
+}
+
+.property-card {
+    padding: 18px;
+    border-radius: var(--radius-md);
+    border: 1px solid var(--border-soft);
+    background: rgba(15, 23, 42, 0.64);
+    transition:
+        transform var(--transition-fast),
+        border-color var(--transition-fast),
+        background var(--transition-fast);
+}
+
+.property-card:hover {
+    transform: translateY(-2px);
+    border-color: rgba(56, 189, 248, 0.28);
+    background: rgba(30, 41, 59, 0.70);
+}
+
+.property-card h4 {
+    margin: 0 0 10px;
+    font-size: 15px;
+}
+
+.property-card p {
+    margin: 0;
+    color: var(--color-muted);
+    font-size: 13px;
+    line-height: 1.55;
+}
+
+.property-card .hero-actions {
+    margin-top: 18px;
+}
+
+.property-status-map {
+    display: grid;
+    grid-template-columns: repeat(5, 1fr);
+    gap: 10px;
+}
+
+.property-status-item {
+    padding: 14px;
+    border-radius: var(--radius-md);
+    border: 1px solid var(--border-soft);
+    background: rgba(15, 23, 42, 0.58);
+    text-align: center;
+}
+
+.property-status-item strong {
+    display: block;
+    margin-bottom: 6px;
+    font-size: 13px;
+}
+
+.property-status-item span {
+    color: var(--color-muted);
+    font-size: 11px;
+}
+
+
+/* ============================================================
+SECTION 16 - SOURCE GOVERNANCE VISUALS
+============================================================ */
+
+.source-rule-grid {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 14px;
+}
+
+.source-rule-card {
+    padding: 18px;
+    border-radius: var(--radius-md);
+    border: 1px solid var(--border-soft);
+    background:
+        radial-gradient(circle at top left, rgba(56, 189, 248, 0.08), transparent 34%),
+        rgba(15, 23, 42, 0.66);
+}
+
+.source-rule-card.warning {
+    border-color: var(--border-yellow);
+    background:
+        radial-gradient(circle at top left, rgba(251, 191, 36, 0.10), transparent 34%),
+        rgba(15, 23, 42, 0.66);
+}
+
+.source-rule-card.danger {
+    border-color: var(--border-red);
+    background:
+        radial-gradient(circle at top left, rgba(251, 113, 133, 0.10), transparent 34%),
+        rgba(15, 23, 42, 0.66);
+}
+
+.source-rule-card h4 {
+    margin: 0 0 10px;
+}
+
+.source-rule-card p {
+    margin: 0;
+    color: var(--color-muted);
+    line-height: 1.55;
+    font-size: 13px;
+}
+
+
+/* ============================================================
+SECTION 17 - CONFIDENCE AND AI SCORING VISUALS
 ============================================================ */
 
 .confidence-card {
@@ -984,7 +1120,7 @@ SECTION 15 - CONFIDENCE AND AI SCORING VISUALS
 }
 
 .confidence-fill.medium {
-    background: linear-gradient(135deg, var(--color-yellow), var(--color-orange));
+    background: var(--gradient-yellow);
 }
 
 .confidence-fill.high {
@@ -1017,7 +1153,7 @@ SECTION 15 - CONFIDENCE AND AI SCORING VISUALS
 
 
 /* ============================================================
-SECTION 16 - MACHINE LEARNING / DEEP LEARNING PANEL HOOKS
+SECTION 18 - MACHINE LEARNING / DEEP LEARNING PANEL HOOKS
 ============================================================ */
 
 .ml-panel {
@@ -1077,7 +1213,7 @@ SECTION 16 - MACHINE LEARNING / DEEP LEARNING PANEL HOOKS
 
 
 /* ============================================================
-SECTION 17 - JSON / DIAGNOSTIC PANELS
+SECTION 19 - JSON / DIAGNOSTIC PANELS
 ============================================================ */
 
 .json-panel,
@@ -1085,6 +1221,7 @@ pre {
     margin: 0;
     white-space: pre-wrap;
     word-break: break-word;
+    overflow-wrap: anywhere;
     color: #cbd5e1;
     font-family: var(--font-mono);
     font-size: 12px;
@@ -1101,7 +1238,7 @@ pre {
 
 
 /* ============================================================
-SECTION 18 - AI STATUS STRIPS
+SECTION 20 - AI STATUS STRIPS
 ============================================================ */
 
 .ai-strip {
@@ -1134,7 +1271,7 @@ SECTION 18 - AI STATUS STRIPS
 
 
 /* ============================================================
-SECTION 19 - ENTERPRISE TABLES
+SECTION 21 - ENTERPRISE TABLES
 ============================================================ */
 
 .table-wrap {
@@ -1174,62 +1311,7 @@ SECTION 19 - ENTERPRISE TABLES
 
 
 /* ============================================================
-SECTION 20 - PROPERTY INTELLIGENCE VISUALS
-============================================================ */
-
-.property-grid {
-    display: grid;
-    grid-template-columns: repeat(3, 1fr);
-    gap: 14px;
-}
-
-.property-card {
-    padding: 18px;
-    border-radius: var(--radius-md);
-    border: 1px solid var(--border-soft);
-    background: rgba(15, 23, 42, 0.64);
-}
-
-.property-card h4 {
-    margin: 0 0 10px;
-    font-size: 15px;
-}
-
-.property-card p {
-    margin: 0;
-    color: var(--color-muted);
-    font-size: 13px;
-    line-height: 1.55;
-}
-
-.property-status-map {
-    display: grid;
-    grid-template-columns: repeat(5, 1fr);
-    gap: 10px;
-}
-
-.property-status-item {
-    padding: 14px;
-    border-radius: var(--radius-md);
-    border: 1px solid var(--border-soft);
-    background: rgba(15, 23, 42, 0.58);
-    text-align: center;
-}
-
-.property-status-item strong {
-    display: block;
-    margin-bottom: 6px;
-    font-size: 13px;
-}
-
-.property-status-item span {
-    color: var(--color-muted);
-    font-size: 11px;
-}
-
-
-/* ============================================================
-SECTION 21 - REVIEW QUEUE / TRAINING UI
+SECTION 22 - REVIEW QUEUE / TRAINING UI
 ============================================================ */
 
 .review-list {
@@ -1276,7 +1358,7 @@ SECTION 21 - REVIEW QUEUE / TRAINING UI
 
 
 /* ============================================================
-SECTION 22 - LOADING STATES
+SECTION 23 - LOADING STATES
 ============================================================ */
 
 .loading-shimmer {
@@ -1307,7 +1389,7 @@ SECTION 22 - LOADING STATES
 
 
 /* ============================================================
-SECTION 23 - ALERTS
+SECTION 24 - ALERTS
 ============================================================ */
 
 .alert {
@@ -1344,7 +1426,45 @@ SECTION 23 - ALERTS
 
 
 /* ============================================================
-SECTION 24 - FOOTER
+SECTION 25 - PROPERTY ROUTER / API BADGES
+============================================================ */
+
+.route-grid {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 10px;
+}
+
+.route-card {
+    padding: 14px;
+    border-radius: var(--radius-sm);
+    border: 1px solid var(--border-soft);
+    background: rgba(2, 6, 23, 0.44);
+}
+
+.route-method {
+    display: inline-flex;
+    padding: 5px 8px;
+    margin-bottom: 8px;
+    border-radius: var(--radius-pill);
+    font-size: 10px;
+    font-weight: 950;
+    letter-spacing: 0.08em;
+    color: var(--color-green);
+    border: 1px solid var(--border-green);
+    background: rgba(52, 211, 153, 0.06);
+}
+
+.route-path {
+    color: var(--color-text-soft);
+    font-family: var(--font-mono);
+    font-size: 12px;
+    overflow-wrap: anywhere;
+}
+
+
+/* ============================================================
+SECTION 26 - FOOTER
 ============================================================ */
 
 .footer {
@@ -1357,7 +1477,7 @@ SECTION 24 - FOOTER
 
 
 /* ============================================================
-SECTION 25 - ANIMATIONS
+SECTION 27 - ANIMATIONS
 ============================================================ */
 
 @keyframes aussemPulse {
@@ -1399,7 +1519,7 @@ SECTION 25 - ANIMATIONS
 
 
 /* ============================================================
-SECTION 26 - ACCESSIBILITY
+SECTION 28 - ACCESSIBILITY
 ============================================================ */
 
 :focus-visible {
@@ -1420,7 +1540,7 @@ SECTION 26 - ACCESSIBILITY
 
 
 /* ============================================================
-SECTION 27 - RESPONSIVE DESIGN
+SECTION 29 - RESPONSIVE DESIGN
 ============================================================ */
 
 @media (max-width: 1300px) {
@@ -1429,7 +1549,8 @@ SECTION 27 - RESPONSIVE DESIGN
     }
 
     .system-pipeline,
-    .ml-stage-grid {
+    .ml-stage-grid,
+    .source-rule-grid {
         grid-template-columns: repeat(3, 1fr);
     }
 
@@ -1439,6 +1560,10 @@ SECTION 27 - RESPONSIVE DESIGN
 
     .property-status-map {
         grid-template-columns: repeat(3, 1fr);
+    }
+
+    .route-grid {
+        grid-template-columns: repeat(2, 1fr);
     }
 
     .span-2,
@@ -1492,7 +1617,9 @@ SECTION 27 - RESPONSIVE DESIGN
     .property-status-map,
     .ai-strip,
     .ml-stage-grid,
-    .form-row {
+    .source-rule-grid,
+    .form-row,
+    .route-grid {
         grid-template-columns: 1fr;
     }
 
@@ -1503,11 +1630,18 @@ SECTION 27 - RESPONSIVE DESIGN
     .bubble {
         max-width: 94%;
     }
+
+    .button-link,
+    button {
+        width: 100%;
+        justify-content: center;
+        text-align: center;
+    }
 }
 
 
 /* ============================================================
-SECTION 28 - PRINT SAFE MODE
+SECTION 30 - PRINT SAFE MODE
 ============================================================ */
 
 @media print {
@@ -1533,7 +1667,7 @@ SECTION 28 - PRINT SAFE MODE
 
 
 /* ============================================================
-SECTION 29 - FUTURE DASHBOARD EXTENSION HOOKS
+SECTION 31 - FUTURE DASHBOARD EXTENSION HOOKS
 ============================================================ */
 
 .dashboard-command-center {}
@@ -1557,6 +1691,15 @@ SECTION 29 - FUTURE DASHBOARD EXTENSION HOOKS
 .dashboard-confidence-calibration {}
 .dashboard-model-registry {}
 .dashboard-dataset-builder {}
+.dashboard-property-router {}
+.dashboard-public-records-engine {}
+.dashboard-source-governance {}
+.dashboard-listing-feed-readiness {}
+.dashboard-valuation-readiness {}
+.dashboard-property-profile-preview {}
+.dashboard-address-intelligence {}
+.dashboard-confidence-engine {}
+.dashboard-source-explanation-engine {}
 
 
 /* ============================================================
