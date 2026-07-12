@@ -1,23 +1,24 @@
 /* ============================================================
 AUSSEM1
-PHASE 2.00 PART 2.01
-ENTERPRISE REAL ESTATE DASHBOARD CONTROL SYSTEM
+PHASE 2.40 PART 3.00
+ENTERPRISE PROPERTY INTELLIGENCE DASHBOARD CONTROLLER
 FILE: app/static/js/dashboard.js
 PURPOSE:
-Browser-side control system for the Aussem1 real estate dashboard.
+Browser-side controller for the Aussem1 property intelligence dashboard.
 
-This file controls:
-- live AI chat
-- hero property search
-- property preview workflow
-- dashboard metrics
-- memory status
-- training status
-- route diagnostics
-- health checks
-- system payload rendering
-- user feedback states
-- future AI / ML / RAG dashboard hooks
+This file provides:
+- live dashboard bootstrap
+- health/readiness diagnostics
+- property intelligence status checks
+- property router visibility
+- chat console control
+- hero property form bridge support
+- memory/training/review metric rendering
+- public-record/property-governance payload visibility
+- defensive fetch handling
+- no fabricated frontend property facts
+- source limitation disclosure
+- resilient Render-safe frontend behavior
 
 AUTHOR:
 Ryan Schuren
@@ -26,57 +27,76 @@ ASSISTANT:
 Alfred
 
 STATUS:
-ENTERPRISE DASHBOARD CONTROL SYSTEM ACTIVE
+ENTERPRISE PROPERTY INTELLIGENCE DASHBOARD JAVASCRIPT ACTIVE
 ============================================================ */
 
 
 /* ============================================================
-SECTION 01 - ENTERPRISE RUNTIME CONFIGURATION
+SECTION 01 - GLOBAL DASHBOARD CONSTANTS
 ============================================================ */
 
-const AUSSEM1_DASHBOARD = {
-    platform: "Aussem1",
-    phase: "PHASE 2.00 PART 2.01",
-    version: "0.2.1",
-    status: "enterprise_dashboard_control_system_active",
+(function () {
+    "use strict";
 
-    api: {
-        dashboardStatus: "/api/dashboard/status",
+    const AUSSEM_DASHBOARD = {
+        name: "Aussem1 Enterprise Property Intelligence Dashboard",
+        version: "0.3.0",
+        phase: "PHASE 2.40 PART 3.00",
+        status: "enterprise_property_intelligence_dashboard_js_active",
+        generatedAt: new Date().toISOString()
+    };
+
+    const API = {
+        health: "/health",
+        platform: "/platform",
+        routes: "/routes",
+        diagnostics: "/diagnostics",
+        aiStatus: "/ai/status",
+        staticStatus: "/static/status",
+        templateStatus: "/templates/status",
+        propertyStatus: "/property-intelligence/status",
+
         dashboardBootstrap: "/api/dashboard/bootstrap",
+        dashboardStatus: "/api/dashboard/status",
+
+        webReadiness: "/web/readiness",
+        webDiagnostics: "/web/diagnostics",
+        webRouteRegistry: "/web/route-registry",
 
         chat: "/chat",
         chatTrace: "/chat/trace",
         chatHealth: "/chat/health",
-        trainingStatus: "/chat/training-status",
-        reviewQueue: "/chat/review-queue",
-        trainingExport: "/chat/training-export",
-        memoryStatus: "/chat/memory-status",
-        memorySearch: "/chat/memory-search",
-        promptStatus: "/chat/prompt-status",
+        chatTrainingStatus: "/chat/training-status",
+        chatReviewQueue: "/chat/review-queue",
+        chatTrainingExport: "/chat/training-export",
+        chatMemoryStatus: "/chat/memory-status",
+        chatMemorySearch: "/chat/memory-search",
+        chatPromptStatus: "/chat/prompt-status",
 
-        propertyPreview: "/properties/preview",
+        propertiesRoot: "/properties",
+        propertiesHealth: "/properties/health",
+        propertiesReadiness: "/properties/readiness",
+        propertiesDiagnostics: "/properties/diagnostics",
+        propertiesRoutes: "/properties/registry/routes",
+        propertyPreview: "/properties/preview"
+    };
 
-        webReadiness: "/web/readiness",
-        webDiagnostics: "/web/diagnostics",
-        routeRegistry: "/web/route-registry",
+    const DEFAULTS = {
+        fetchTimeoutMs: 12000,
+        refreshIntervalMs: 45000,
+        maxRenderedMessages: 100,
+        maxPanelItems: 8,
+        defaultSessionPrefix: "aussem1-session",
+        emptyValue: "Unavailable",
+        dashboardAnchor: "#live-chat"
+    };
 
-        health: "/health",
-        platform: "/platform",
-        aiStatus: "/ai/status",
-        diagnostics: "/diagnostics",
 
-        dashboardCss: "/static/css/dashboard.css",
-        dashboardJs: "/static/js/dashboard.js"
-    },
+    /* ============================================================
+    SECTION 02 - DOM SELECTORS
+    ============================================================ */
 
-    refresh: {
-        statusMs: 10000,
-        healthMs: 20000,
-        maxChatMessages: 100,
-        diagnosticTimeoutMs: 12000
-    },
-
-    selectors: {
+    const SELECTORS = {
         chatStream: "chatStream",
         chatForm: "chatForm",
         messageInput: "messageInput",
@@ -97,1187 +117,1163 @@ const AUSSEM1_DASHBOARD = {
         memoryPanel: "memoryPanel",
         rawPayload: "rawPayload",
         liveChat: "live-chat"
-    },
-
-    defaults: {
-        userId: "dashboard-user",
-        welcomeMessage:
-            "Aussem1 is online. Ask about a property address, value drivers, public records, comparable homes, market context, or platform status.",
-        emptyAddressPrompt:
-            "Enter an address or ask a general real estate intelligence question.",
-        propertyQuestionTemplate:
-            "Analyze this property and explain what records, comparable homes, valuation factors, and market signals should be reviewed:"
-    }
-};
+    };
 
 
-/* ============================================================
-SECTION 02 - APPLICATION STATE
-============================================================ */
+    /* ============================================================
+    SECTION 03 - STATE
+    ============================================================ */
 
-const dashboardState = {
-    initialized: false,
-
-    currentSessionId: null,
-    currentUserId: AUSSEM1_DASHBOARD.defaults.userId,
-    currentPropertyAddress: null,
-
-    lastStatusPayload: null,
-    lastBootstrapPayload: null,
-    lastHealthPayload: null,
-    lastDiagnosticsPayload: null,
-    lastPropertyPreviewPayload: null,
-    lastError: null,
-
-    polling: {
-        statusIntervalId: null,
-        healthIntervalId: null
-    },
-
-    counters: {
-        messagesSent: 0,
-        messagesReceived: 0,
-        refreshes: 0,
-        diagnosticsRun: 0,
-        healthChecks: 0,
-        propertyPreviews: 0,
-        errors: 0
-    },
-
-    ui: {
-        isChatBusy: false,
-        isRefreshing: false,
-        isDiagnosticsBusy: false,
-        isPropertyPreviewBusy: false
-    }
-};
+    const state = {
+        initialized: false,
+        sessionId: null,
+        currentPropertyAddress: "",
+        busy: false,
+        lastBootstrapPayload: null,
+        lastStatusPayload: null,
+        lastHealthPayload: null,
+        lastDiagnosticsPayload: null,
+        lastPropertyStatusPayload: null,
+        lastPropertyRouterPayload: null,
+        lastTrainingPayload: null,
+        lastMemoryPayload: null,
+        lastReviewPayload: null,
+        lastPromptPayload: null,
+        messageCount: 0,
+        refreshTimer: null,
+        endpointResults: {},
+        errors: [],
+        warnings: []
+    };
 
 
-/* ============================================================
-SECTION 03 - SAFE DOM UTILITIES
-============================================================ */
+    /* ============================================================
+    SECTION 04 - BASIC UTILITIES
+    ============================================================ */
 
-function byId(id) {
-    return document.getElementById(id);
-}
-
-
-function hasElement(id) {
-    return byId(id) !== null;
-}
-
-
-function setText(id, value) {
-    const element = byId(id);
-
-    if (!element) {
-        return;
+    function nowIso() {
+        return new Date().toISOString();
     }
 
-    element.textContent = String(value ?? "");
-}
-
-
-function setHTML(id, value) {
-    const element = byId(id);
-
-    if (!element) {
-        return;
+    function nowLabel() {
+        return new Date().toLocaleString();
     }
 
-    element.innerHTML = value;
-}
+    function safeString(value) {
+        if (value === null || value === undefined) {
+            return "";
+        }
 
-
-function getValue(id) {
-    const element = byId(id);
-
-    if (!element) {
-        return "";
+        return String(value).trim();
     }
 
-    return String(element.value || "").trim();
-}
+    function safeNumber(value, fallback = 0) {
+        const number = Number(value);
 
+        if (Number.isFinite(number)) {
+            return number;
+        }
 
-function setValue(id, value) {
-    const element = byId(id);
-
-    if (!element) {
-        return;
-    }
-
-    element.value = value ?? "";
-}
-
-
-function disableElement(element, disabled = true) {
-    if (!element) {
-        return;
-    }
-
-    element.disabled = disabled;
-    element.setAttribute("aria-busy", disabled ? "true" : "false");
-}
-
-
-function scrollToElement(id) {
-    const element = byId(id);
-
-    if (!element) {
-        return;
-    }
-
-    element.scrollIntoView({
-        behavior: "smooth",
-        block: "start"
-    });
-}
-
-
-function safeNumber(value, fallback = 0) {
-    const numberValue = Number(value);
-
-    if (value === undefined || value === null || Number.isNaN(numberValue)) {
         return fallback;
     }
 
-    return value;
-}
-
-
-function safeString(value, fallback = "") {
-    if (value === undefined || value === null) {
-        return fallback;
+    function isObject(value) {
+        return Boolean(
+            value &&
+            typeof value === "object" &&
+            !Array.isArray(value)
+        );
     }
 
-    return String(value);
-}
-
-
-function prettyJson(value) {
-    try {
-        return JSON.stringify(value, null, 2);
-    } catch (error) {
-        return String(value);
+    function byId(id) {
+        return document.getElementById(id);
     }
-}
+
+    function setText(id, value) {
+        const element = byId(id);
+
+        if (!element) {
+            return;
+        }
+
+        element.textContent = safeString(value);
+    }
+
+    function setHtml(id, value) {
+        const element = byId(id);
+
+        if (!element) {
+            return;
+        }
+
+        element.innerHTML = value;
+    }
+
+    function formatInteger(value) {
+        return new Intl.NumberFormat("en-US").format(
+            safeNumber(value, 0)
+        );
+    }
+
+    function truncateText(value, maxLength = 180) {
+        const text = safeString(value);
+
+        if (text.length <= maxLength) {
+            return text;
+        }
+
+        return `${text.slice(0, maxLength - 1)}…`;
+    }
+
+    function escapeHtml(value) {
+        return safeString(value)
+            .replaceAll("&", "&amp;")
+            .replaceAll("<", "&lt;")
+            .replaceAll(">", "&gt;")
+            .replaceAll('"', "&quot;")
+            .replaceAll("'", "&#039;");
+    }
+
+    function prettyJson(value) {
+        try {
+            return JSON.stringify(value, null, 2);
+        } catch (error) {
+            return String(value);
+        }
+    }
+
+    function makeSessionId() {
+        const existing = window.localStorage.getItem("aussem1_session_id");
+
+        if (existing) {
+            return existing;
+        }
+
+        const generated = `${DEFAULTS.defaultSessionPrefix}-${Date.now()}-${Math.random()
+            .toString(16)
+            .slice(2)}`;
+
+        window.localStorage.setItem("aussem1_session_id", generated);
+
+        return generated;
+    }
+
+    function normalizeStatus(value) {
+        const text = safeString(value).toLowerCase();
+
+        if (!text) {
+            return "unknown";
+        }
+
+        return text;
+    }
+
+    function isSuccessfulStatus(value) {
+        const status = normalizeStatus(value);
+
+        return [
+            "ok",
+            "active",
+            "ready",
+            "available",
+            "foundation_active",
+            "enterprise_application_property_intelligence_routing_active",
+            "enterprise_property_intelligence_dashboard_js_active"
+        ].includes(status);
+    }
 
 
-function nowLabel() {
-    return new Date().toLocaleTimeString();
-}
+    /* ============================================================
+    SECTION 05 - NETWORK UTILITIES
+    ============================================================ */
 
+    async function fetchJson(url, options = {}) {
+        const controller = new AbortController();
+        const timeoutMs = options.timeoutMs || DEFAULTS.fetchTimeoutMs;
 
-function isoNow() {
-    return new Date().toISOString();
-}
+        const timeout = window.setTimeout(function () {
+            controller.abort();
+        }, timeoutMs);
 
-
-/* ============================================================
-SECTION 04 - NETWORK UTILITIES
-============================================================ */
-
-async function fetchJson(url, options = {}) {
-    const controller = new AbortController();
-    const timeout = options.timeoutMs || AUSSEM1_DASHBOARD.refresh.diagnosticTimeoutMs;
-
-    const timeoutId = setTimeout(() => {
-        controller.abort();
-    }, timeout);
-
-    try {
-        const response = await fetch(url, {
-            cache: "no-store",
-            signal: controller.signal,
-            ...options,
+        const requestOptions = {
+            method: options.method || "GET",
             headers: {
-                "Content-Type": "application/json",
+                "Accept": "application/json",
                 ...(options.headers || {})
+            },
+            signal: controller.signal
+        };
+
+        if (options.body !== undefined) {
+            requestOptions.headers["Content-Type"] = "application/json";
+            requestOptions.body = JSON.stringify(options.body);
+        }
+
+        const startedAt = performance.now();
+
+        try {
+            const response = await fetch(url, requestOptions);
+            const text = await response.text();
+
+            let payload = null;
+
+            if (text) {
+                try {
+                    payload = JSON.parse(text);
+                } catch (error) {
+                    payload = {
+                        raw_text: text,
+                        parse_error: error.message
+                    };
+                }
             }
+
+            const durationMs = Math.round(performance.now() - startedAt);
+
+            return {
+                ok: response.ok,
+                status: response.status,
+                statusText: response.statusText,
+                url,
+                durationMs,
+                payload,
+                error: null,
+                retrievedAt: nowIso()
+            };
+        } catch (error) {
+            return {
+                ok: false,
+                status: 0,
+                statusText: "network_error",
+                url,
+                durationMs: Math.round(performance.now() - startedAt),
+                payload: null,
+                error: error.name === "AbortError"
+                    ? `Request timed out after ${timeoutMs}ms`
+                    : error.message,
+                retrievedAt: nowIso()
+            };
+        } finally {
+            window.clearTimeout(timeout);
+        }
+    }
+
+    async function safeEndpoint(name, url, options = {}) {
+        const result = await fetchJson(url, options);
+
+        state.endpointResults[name] = result;
+
+        if (!result.ok) {
+            state.warnings.push({
+                endpoint: name,
+                url,
+                status: result.status,
+                error: result.error,
+                at: nowIso()
+            });
+        }
+
+        return result;
+    }
+
+
+    /* ============================================================
+    SECTION 06 - MESSAGE RENDERING
+    ============================================================ */
+
+    function getChatStream() {
+        return byId(SELECTORS.chatStream);
+    }
+
+    function renderMessage(role, content, metadata = {}) {
+        const stream = getChatStream();
+
+        if (!stream) {
+            return;
+        }
+
+        const wrapper = document.createElement("div");
+        wrapper.className = `message ${role === "user" ? "user" : "assistant"}`;
+
+        const bubble = document.createElement("div");
+        bubble.className = "bubble";
+
+        const body = document.createElement("div");
+        body.className = "message-body";
+        body.textContent = safeString(content);
+
+        bubble.appendChild(body);
+
+        if (metadata && Object.keys(metadata).length > 0) {
+            const meta = document.createElement("div");
+            meta.className = "message-meta";
+            meta.textContent = buildMessageMeta(metadata);
+            bubble.appendChild(meta);
+        }
+
+        wrapper.appendChild(bubble);
+        stream.appendChild(wrapper);
+
+        trimMessages();
+        scrollChatToBottom();
+    }
+
+    function buildMessageMeta(metadata) {
+        const pieces = [];
+
+        if (metadata.status) {
+            pieces.push(`status: ${metadata.status}`);
+        }
+
+        if (metadata.confidence !== undefined && metadata.confidence !== null) {
+            pieces.push(`confidence: ${metadata.confidence}`);
+        }
+
+        if (metadata.source) {
+            pieces.push(`source: ${metadata.source}`);
+        }
+
+        if (metadata.timestamp) {
+            pieces.push(metadata.timestamp);
+        }
+
+        return pieces.join(" · ");
+    }
+
+    function trimMessages() {
+        const stream = getChatStream();
+
+        if (!stream) {
+            return;
+        }
+
+        const messages = stream.querySelectorAll(".message");
+
+        if (messages.length <= DEFAULTS.maxRenderedMessages) {
+            return;
+        }
+
+        const removeCount = messages.length - DEFAULTS.maxRenderedMessages;
+
+        for (let index = 0; index < removeCount; index += 1) {
+            messages[index].remove();
+        }
+    }
+
+    function scrollChatToBottom() {
+        const stream = getChatStream();
+
+        if (!stream) {
+            return;
+        }
+
+        stream.scrollTop = stream.scrollHeight;
+    }
+
+    function renderSystemNotice(message, severity = "info") {
+        renderMessage("assistant", message, {
+            status: severity,
+            timestamp: nowLabel()
+        });
+    }
+
+
+    /* ============================================================
+    SECTION 07 - CHAT PAYLOAD NORMALIZATION
+    ============================================================ */
+
+    function normalizeChatResponse(payload) {
+        if (!payload) {
+            return {
+                answer: "The chat endpoint returned no response payload.",
+                status: "empty",
+                confidence: null,
+                raw: payload
+            };
+        }
+
+        if (typeof payload === "string") {
+            return {
+                answer: payload,
+                status: "ok",
+                confidence: null,
+                raw: payload
+            };
+        }
+
+        const candidates = [
+            payload.answer,
+            payload.response,
+            payload.message,
+            payload.content,
+            payload.text,
+            payload.data && payload.data.answer,
+            payload.data && payload.data.response,
+            payload.data && payload.data.message,
+            payload.result && payload.result.answer,
+            payload.result && payload.result.response
+        ];
+
+        const answer = candidates.find(function (candidate) {
+            return safeString(candidate);
         });
 
-        const contentType = response.headers.get("content-type") || "";
-
-        let payload;
-
-        if (contentType.includes("application/json")) {
-            payload = await response.json();
-        } else {
-            payload = await response.text();
-        }
-
-        if (!response.ok) {
-            const detail = payload?.detail || payload?.message || payload;
-            throw new Error(`Request failed ${response.status}: ${safeString(detail)}`);
-        }
-
-        return payload;
-    } finally {
-        clearTimeout(timeoutId);
-    }
-}
-
-
-async function postJson(url, body, options = {}) {
-    return fetchJson(url, {
-        method: "POST",
-        body: JSON.stringify(body),
-        ...options
-    });
-}
-
-
-/* ============================================================
-SECTION 05 - NOTIFICATION AND STATUS RENDERING
-============================================================ */
-
-function renderRawPayload(payload) {
-    setText(
-        AUSSEM1_DASHBOARD.selectors.rawPayload,
-        prettyJson(payload)
-    );
-}
-
-
-function renderDeveloperEvent(title, payload) {
-    renderRawPayload({
-        event: title,
-        payload,
-        dashboard_state: {
-            session_id: dashboardState.currentSessionId,
-            property_address: dashboardState.currentPropertyAddress,
-            counters: dashboardState.counters
-        },
-        timestamp: isoNow()
-    });
-}
-
-
-function setLastUpdated(label = null) {
-    setText(
-        AUSSEM1_DASHBOARD.selectors.lastUpdated,
-        label || `Updated ${nowLabel()}`
-    );
-}
-
-
-function renderError(error, context = "dashboard") {
-    dashboardState.counters.errors += 1;
-    dashboardState.lastError = error;
-
-    renderRawPayload({
-        status: "error",
-        context,
-        error: error?.message || String(error),
-        timestamp: isoNow()
-    });
-}
-
-
-function renderSoftNotice(message, context = "system") {
-    addMessage("assistant", message, {
-        intent: context,
-        timestamp: nowLabel()
-    });
-}
-
-
-/* ============================================================
-SECTION 06 - MESSAGE RENDERING
-============================================================ */
-
-function createMessageElement(role, text, metadata = {}) {
-    const wrapper = document.createElement("div");
-    wrapper.className = `message ${role}`;
-
-    const bubble = document.createElement("div");
-    bubble.className = "bubble";
-    bubble.textContent = text;
-
-    const metaPieces = [];
-
-    if (metadata.intent) {
-        metaPieces.push(`Intent: ${metadata.intent}`);
-    }
-
-    if (metadata.confidence !== undefined && metadata.confidence !== null) {
-        metaPieces.push(`Confidence: ${metadata.confidence}`);
-    }
-
-    if (metadata.sourceStatus) {
-        metaPieces.push(`Sources: ${metadata.sourceStatus}`);
-    }
-
-    if (metadata.timestamp) {
-        metaPieces.push(metadata.timestamp);
-    }
-
-    if (metaPieces.length > 0) {
-        const meta = document.createElement("div");
-        meta.className = "message-meta";
-        meta.textContent = metaPieces.join(" · ");
-        bubble.appendChild(meta);
-    }
-
-    wrapper.appendChild(bubble);
-
-    return wrapper;
-}
-
-
-function addMessage(role, text, metadata = {}) {
-    const chatStream = byId(AUSSEM1_DASHBOARD.selectors.chatStream);
-
-    if (!chatStream) {
-        return;
-    }
-
-    const messageElement = createMessageElement(role, text, metadata);
-
-    chatStream.appendChild(messageElement);
-
-    while (chatStream.children.length > AUSSEM1_DASHBOARD.refresh.maxChatMessages) {
-        chatStream.removeChild(chatStream.firstElementChild);
-    }
-
-    chatStream.scrollTop = chatStream.scrollHeight;
-}
-
-
-function addSystemMessage(text) {
-    addMessage("assistant", text, {
-        intent: "system",
-        timestamp: nowLabel()
-    });
-}
-
-
-function addPropertyMessage(text) {
-    addMessage("assistant", text, {
-        intent: "property_intelligence",
-        timestamp: nowLabel()
-    });
-}
-
-
-function clearChat() {
-    const chatStream = byId(AUSSEM1_DASHBOARD.selectors.chatStream);
-
-    if (!chatStream) {
-        return;
-    }
-
-    chatStream.innerHTML = "";
-
-    dashboardState.currentSessionId = null;
-    dashboardState.currentPropertyAddress = null;
-
-    updateSessionLabel();
-
-    addSystemMessage(AUSSEM1_DASHBOARD.defaults.welcomeMessage);
-}
-
-
-/* ============================================================
-SECTION 07 - RESPONSE NORMALIZATION
-============================================================ */
-
-function normalizeChatResponse(payload) {
-    if (!payload || typeof payload !== "object") {
         return {
-            response: safeString(payload, "No response returned."),
-            session_id: dashboardState.currentSessionId,
-            intent: null,
-            confidence: null,
-            sourceStatus: null,
+            answer: answer || prettyJson(payload),
+            status: payload.status || payload.data?.status || "ok",
+            confidence: payload.confidence || payload.data?.confidence || null,
             raw: payload
         };
     }
 
-    return {
-        response:
-            payload.response ||
-            payload.answer ||
-            payload.message ||
-            payload.data?.response ||
-            payload.data?.answer ||
-            payload.data?.message ||
-            prettyJson(payload),
-
-        session_id:
-            payload.session_id ||
-            payload.data?.session_id ||
-            dashboardState.currentSessionId,
-
-        intent:
-            payload.intent ||
-            payload.data?.intent ||
-            payload.intent_label ||
-            null,
-
-        confidence:
-            payload.confidence ||
-            payload.data?.confidence ||
-            payload.confidence_score ||
-            null,
-
-        sourceStatus:
-            payload.source_status ||
-            payload.data?.source_status ||
-            payload.sources?.status ||
-            null,
-
-        raw: payload
-    };
-}
-
-
-function normalizeDashboardStatus(payload) {
-    const systems = payload?.systems || payload?.data?.systems || {};
-    const memoryStore = systems.memory_store || {};
-    const trainingLogger = systems.training_logger || {};
-    const chatEngine = systems.chat_engine || {};
-    const promptRegistry = systems.prompt_registry || {};
-    const webRoutes = systems.web_routes || {};
-
-    return {
-        raw: payload,
-        systems,
-        memoryHealth: memoryStore.health || memoryStore || {},
-        trainingSummary: trainingLogger || {},
-        chatEngine,
-        promptRegistry,
-        webRoutes,
-        timestamp: payload?.timestamp || payload?.data?.timestamp || null
-    };
-}
-
-
-function normalizeEnterpriseData(payload) {
-    if (!payload || typeof payload !== "object") {
-        return payload;
+    function buildChatRequest(message, propertyAddress) {
+        return {
+            message,
+            property_address: propertyAddress || null,
+            address: propertyAddress || null,
+            session_id: state.sessionId,
+            context: {
+                source: "aussem1_dashboard",
+                phase: AUSSEM_DASHBOARD.phase,
+                strict_source_mode: true,
+                no_mock_property_facts: true,
+                unsupported_without_listing_feed: [
+                    "active_listing_status",
+                    "under_contract_status",
+                    "current_listing_price",
+                    "days_on_market",
+                    "showing_availability"
+                ],
+                timestamp: nowIso()
+            }
+        };
     }
 
-    return payload.data || payload;
-}
 
+    /* ============================================================
+    SECTION 08 - CHAT CONTROLLER
+    ============================================================ */
 
-/* ============================================================
-SECTION 08 - METRIC RENDERING
-============================================================ */
+    async function submitChat(message, propertyAddress = "") {
+        const cleanMessage = safeString(message);
+        const cleanAddress = safeString(propertyAddress);
 
-function renderMetric(id, value) {
-    setText(id, safeNumber(value));
-}
+        if (!cleanMessage) {
+            return;
+        }
 
+        if (state.busy) {
+            renderSystemNotice(
+                "Aussem1 is still processing the previous request. Please wait one moment.",
+                "busy"
+            );
+            return;
+        }
 
-function renderDashboardMetrics(status) {
-    const memory = status.memoryHealth || {};
-    const training = status.trainingSummary || {};
+        state.busy = true;
+        state.messageCount += 1;
 
-    renderMetric(
-        AUSSEM1_DASHBOARD.selectors.metricMessages,
-        memory.total_messages
-    );
+        if (cleanAddress) {
+            state.currentPropertyAddress = cleanAddress;
+        }
 
-    renderMetric(
-        AUSSEM1_DASHBOARD.selectors.metricSessions,
-        memory.total_sessions
-    );
-
-    renderMetric(
-        AUSSEM1_DASHBOARD.selectors.metricTraining,
-        training.total_interactions
-    );
-
-    renderMetric(
-        AUSSEM1_DASHBOARD.selectors.metricReview,
-        training.review_queue_size
-    );
-
-    setLastUpdated();
-}
-
-
-function renderTrainingPanel(training) {
-    const totalInteractions = safeNumber(training.total_interactions);
-    const failedInteractions = safeNumber(training.failed_interactions);
-    const averageConfidence = safeNumber(training.average_confidence);
-    const reviewQueueSize = safeNumber(training.review_queue_size);
-
-    setHTML(
-        AUSSEM1_DASHBOARD.selectors.trainingPanel,
-        `
-        <div class="log-item">
-            <strong>Total interactions:</strong> ${totalInteractions}
-        </div>
-        <div class="log-item">
-            <strong>Failed interactions:</strong> ${failedInteractions}
-        </div>
-        <div class="log-item">
-            <strong>Average confidence:</strong> ${averageConfidence}
-        </div>
-        <div class="log-item">
-            <strong>Review queue size:</strong> ${reviewQueueSize}
-        </div>
-        `
-    );
-}
-
-
-function renderMemoryPanel(memory) {
-    const totalMessages = safeNumber(memory.total_messages);
-    const totalSessions = safeNumber(memory.total_sessions);
-    const totalProperties = safeNumber(memory.total_properties);
-    const totalKnowledgeItems = safeNumber(memory.total_knowledge_items);
-
-    setHTML(
-        AUSSEM1_DASHBOARD.selectors.memoryPanel,
-        `
-        <div class="log-item">
-            <strong>Total messages:</strong> ${totalMessages}
-        </div>
-        <div class="log-item">
-            <strong>Total sessions:</strong> ${totalSessions}
-        </div>
-        <div class="log-item">
-            <strong>Total properties:</strong> ${totalProperties}
-        </div>
-        <div class="log-item">
-            <strong>Knowledge items:</strong> ${totalKnowledgeItems}
-        </div>
-        `
-    );
-}
-
-
-/* ============================================================
-SECTION 09 - DASHBOARD REFRESH ENGINE
-============================================================ */
-
-async function refreshDashboard() {
-    if (dashboardState.ui.isRefreshing) {
-        return;
-    }
-
-    dashboardState.ui.isRefreshing = true;
-
-    try {
-        const payload = await fetchJson(AUSSEM1_DASHBOARD.api.dashboardStatus);
-        const status = normalizeDashboardStatus(payload);
-
-        dashboardState.lastStatusPayload = payload;
-        dashboardState.counters.refreshes += 1;
-
-        renderDashboardMetrics(status);
-        renderTrainingPanel(status.trainingSummary);
-        renderMemoryPanel(status.memoryHealth);
-        renderRawPayload(payload);
-
-        dashboardState.lastError = null;
-    } catch (error) {
-        renderError(error, "dashboard_refresh");
-    } finally {
-        dashboardState.ui.isRefreshing = false;
-    }
-}
-
-
-async function loadBootstrap() {
-    try {
-        const payload = await fetchJson(AUSSEM1_DASHBOARD.api.dashboardBootstrap);
-        dashboardState.lastBootstrapPayload = payload;
-        return payload;
-    } catch (error) {
-        renderError(error, "dashboard_bootstrap");
-        return null;
-    }
-}
-
-
-/* ============================================================
-SECTION 10 - CHAT CONTROL SYSTEM
-============================================================ */
-
-function getChatInputPayload() {
-    const message = getValue(AUSSEM1_DASHBOARD.selectors.messageInput);
-    const propertyAddress = getValue(AUSSEM1_DASHBOARD.selectors.propertyAddress);
-
-    return {
-        message,
-        property_address: propertyAddress || null,
-        session_id: dashboardState.currentSessionId,
-        user_id: dashboardState.currentUserId
-    };
-}
-
-
-function updateSessionLabel() {
-    const label = dashboardState.currentSessionId
-        ? `Session: ${dashboardState.currentSessionId}`
-        : "Session: new";
-
-    setText(AUSSEM1_DASHBOARD.selectors.sessionId, label);
-}
-
-
-async function submitChatMessage(event) {
-    if (event) {
-        event.preventDefault();
-    }
-
-    if (dashboardState.ui.isChatBusy) {
-        return;
-    }
-
-    const payload = getChatInputPayload();
-
-    if (!payload.message) {
-        renderSoftNotice("Ask a real estate question first.", "input");
-        return;
-    }
-
-    dashboardState.ui.isChatBusy = true;
-    dashboardState.currentPropertyAddress = payload.property_address;
-    dashboardState.counters.messagesSent += 1;
-
-    addMessage("user", payload.message, {
-        timestamp: nowLabel()
-    });
-
-    setValue(AUSSEM1_DASHBOARD.selectors.messageInput, "");
-
-    try {
-        const responsePayload = await postJson(AUSSEM1_DASHBOARD.api.chat, payload);
-        const normalized = normalizeChatResponse(responsePayload);
-
-        dashboardState.currentSessionId = normalized.session_id;
-        dashboardState.counters.messagesReceived += 1;
-
-        updateSessionLabel();
-
-        addMessage("assistant", normalized.response, {
-            intent: normalized.intent,
-            confidence: normalized.confidence,
-            sourceStatus: normalized.sourceStatus,
+        renderMessage("user", cleanMessage, {
+            source: cleanAddress || "general",
             timestamp: nowLabel()
         });
 
-        renderRawPayload(normalized.raw);
-        await refreshDashboard();
-    } catch (error) {
-        dashboardState.counters.errors += 1;
+        const payload = buildChatRequest(cleanMessage, cleanAddress);
 
-        addMessage(
+        const result = await safeEndpoint("chat", API.chat, {
+            method: "POST",
+            body: payload,
+            timeoutMs: 25000
+        });
+
+        if (!result.ok) {
+            renderMessage(
+                "assistant",
+                [
+                    "The Aussem1 chat endpoint is unavailable or returned an error.",
+                    "",
+                    `Endpoint: ${API.chat}`,
+                    `Status: ${result.status || "network error"}`,
+                    `Detail: ${result.error || result.statusText || "unknown"}`
+                ].join("\n"),
+                {
+                    status: "error",
+                    timestamp: nowLabel()
+                }
+            );
+            state.busy = false;
+            renderRawPayload();
+            return;
+        }
+
+        const normalized = normalizeChatResponse(result.payload);
+
+        renderMessage(
             "assistant",
-            `Chat request failed: ${error.message}`,
+            normalized.answer,
             {
-                intent: "error",
+                status: normalized.status,
+                confidence: normalized.confidence,
                 timestamp: nowLabel()
             }
         );
 
-        renderError(error, "chat_request");
-    } finally {
-        dashboardState.ui.isChatBusy = false;
-    }
-}
-
-
-function bindChatForm() {
-    const form = byId(AUSSEM1_DASHBOARD.selectors.chatForm);
-
-    if (!form) {
-        return;
+        state.busy = false;
+        await refreshDashboard();
     }
 
-    form.addEventListener("submit", submitChatMessage);
-}
+    function bindChatForm() {
+        const form = byId(SELECTORS.chatForm);
 
-
-/* ============================================================
-SECTION 11 - HERO PROPERTY SEARCH SYSTEM
-============================================================ */
-
-function buildHeroPropertyQuestion(address, question) {
-    if (question) {
-        return question;
-    }
-
-    if (address) {
-        return `${AUSSEM1_DASHBOARD.defaults.propertyQuestionTemplate} ${address}`;
-    }
-
-    return AUSSEM1_DASHBOARD.defaults.emptyAddressPrompt;
-}
-
-
-async function submitHeroPropertyForm(event) {
-    if (event) {
-        event.preventDefault();
-    }
-
-    const address = getValue(AUSSEM1_DASHBOARD.selectors.heroPropertyAddress);
-    const question = getValue(AUSSEM1_DASHBOARD.selectors.heroPropertyQuestion);
-    const finalQuestion = buildHeroPropertyQuestion(address, question);
-
-    if (address) {
-        setValue(AUSSEM1_DASHBOARD.selectors.propertyAddress, address);
-        dashboardState.currentPropertyAddress = address;
-    }
-
-    setValue(AUSSEM1_DASHBOARD.selectors.messageInput, finalQuestion);
-
-    scrollToElement(AUSSEM1_DASHBOARD.selectors.liveChat);
-
-    const form = byId(AUSSEM1_DASHBOARD.selectors.chatForm);
-
-    if (form) {
-        form.requestSubmit();
-    }
-
-    if (address) {
-        await runPropertyPreview(address, finalQuestion);
-    }
-}
-
-
-function bindHeroPropertyForm() {
-    const form = byId(AUSSEM1_DASHBOARD.selectors.heroPropertyForm);
-
-    if (!form) {
-        return;
-    }
-
-    form.addEventListener("submit", submitHeroPropertyForm);
-}
-
-
-/* ============================================================
-SECTION 12 - PROPERTY PREVIEW SYSTEM
-============================================================ */
-
-async function runPropertyPreview(address, question = null) {
-    if (!address) {
-        return {
-            status: "missing_address",
-            message: "A property address is required."
-        };
-    }
-
-    if (dashboardState.ui.isPropertyPreviewBusy) {
-        return {
-            status: "busy",
-            message: "Property preview already running."
-        };
-    }
-
-    dashboardState.ui.isPropertyPreviewBusy = true;
-
-    try {
-        const payload = await postJson(AUSSEM1_DASHBOARD.api.propertyPreview, {
-            property_address: address,
-            question
-        });
-
-        dashboardState.lastPropertyPreviewPayload = payload;
-        dashboardState.counters.propertyPreviews += 1;
-
-        const data = normalizeEnterpriseData(payload);
-
-        addPropertyMessage(
-            [
-                `Property preview initialized for: ${address}`,
-                "",
-                "Current phase:",
-                "Aussem1 can route this property question, preserve the address context, and prepare the future records/comps/valuation pipeline.",
-                "",
-                "Next engine:",
-                "Address Intelligence and canonical property profile construction."
-            ].join("\n")
-        );
-
-        renderDeveloperEvent("property_preview", data);
-
-        return payload;
-    } catch (error) {
-        renderError(error, "property_preview");
-        return {
-            status: "failed",
-            error: error.message
-        };
-    } finally {
-        dashboardState.ui.isPropertyPreviewBusy = false;
-    }
-}
-
-
-/* ============================================================
-SECTION 13 - MEMORY SEARCH SYSTEM
-============================================================ */
-
-async function searchMemory(query, limit = 20) {
-    if (!query) {
-        return {
-            status: "missing_query",
-            results: []
-        };
-    }
-
-    try {
-        const payload = await postJson(AUSSEM1_DASHBOARD.api.memorySearch, {
-            query,
-            limit
-        });
-
-        renderDeveloperEvent("memory_search", payload);
-
-        return payload;
-    } catch (error) {
-        renderError(error, "memory_search");
-        return {
-            status: "failed",
-            error: error.message,
-            results: []
-        };
-    }
-}
-
-
-/* ============================================================
-SECTION 14 - HEALTH AND DIAGNOSTIC SYSTEM
-============================================================ */
-
-async function runHealthCheck() {
-    try {
-        const payload = await fetchJson(AUSSEM1_DASHBOARD.api.health);
-
-        dashboardState.lastHealthPayload = payload;
-        dashboardState.counters.healthChecks += 1;
-
-        return payload;
-    } catch (error) {
-        dashboardState.lastError = error;
-
-        return {
-            status: "health_check_failed",
-            error: error.message
-        };
-    }
-}
-
-
-async function runFullDiagnostics() {
-    if (dashboardState.ui.isDiagnosticsBusy) {
-        return dashboardState.lastDiagnosticsPayload;
-    }
-
-    dashboardState.ui.isDiagnosticsBusy = true;
-
-    const endpoints = [
-        ["health", AUSSEM1_DASHBOARD.api.health],
-        ["platform", AUSSEM1_DASHBOARD.api.platform],
-        ["ai_status", AUSSEM1_DASHBOARD.api.aiStatus],
-        ["diagnostics", AUSSEM1_DASHBOARD.api.diagnostics],
-        ["web_readiness", AUSSEM1_DASHBOARD.api.webReadiness],
-        ["web_diagnostics", AUSSEM1_DASHBOARD.api.webDiagnostics],
-        ["route_registry", AUSSEM1_DASHBOARD.api.routeRegistry],
-        ["chat_health", AUSSEM1_DASHBOARD.api.chatHealth],
-        ["prompt_status", AUSSEM1_DASHBOARD.api.promptStatus],
-        ["training_status", AUSSEM1_DASHBOARD.api.trainingStatus],
-        ["memory_status", AUSSEM1_DASHBOARD.api.memoryStatus]
-    ];
-
-    const results = {};
-
-    for (const [name, url] of endpoints) {
-        try {
-            results[name] = await fetchJson(url);
-        } catch (error) {
-            results[name] = {
-                status: "failed",
-                error: error.message
-            };
-        }
-    }
-
-    const payload = {
-        diagnostics: results,
-        counters: dashboardState.counters,
-        timestamp: isoNow()
-    };
-
-    dashboardState.lastDiagnosticsPayload = payload;
-    dashboardState.counters.diagnosticsRun += 1;
-
-    renderRawPayload(payload);
-    renderSoftNotice("Diagnostics complete. Review the developer payload panel.", "diagnostics");
-
-    dashboardState.ui.isDiagnosticsBusy = false;
-
-    return payload;
-}
-
-
-/* ============================================================
-SECTION 15 - STATIC ASSET VERIFICATION
-============================================================ */
-
-async function verifyStaticAssets() {
-    const checks = {
-        css: AUSSEM1_DASHBOARD.api.dashboardCss,
-        js: AUSSEM1_DASHBOARD.api.dashboardJs
-    };
-
-    const results = {};
-
-    for (const [key, url] of Object.entries(checks)) {
-        try {
-            const response = await fetch(url, {
-                method: "HEAD",
-                cache: "no-store"
-            });
-
-            results[key] = {
-                url,
-                ok: response.ok,
-                status: response.status
-            };
-        } catch (error) {
-            results[key] = {
-                url,
-                ok: false,
-                error: error.message
-            };
-        }
-    }
-
-    return results;
-}
-
-
-/* ============================================================
-SECTION 16 - DYNAMIC UI ENHANCEMENT
-============================================================ */
-
-function createControlButton(label, onClick, className = "button-secondary") {
-    const button = document.createElement("button");
-
-    button.type = "button";
-    button.className = className;
-    button.textContent = label;
-    button.addEventListener("click", onClick);
-
-    return button;
-}
-
-
-function injectDashboardControlBar() {
-    const heroActions = document.querySelector(".hero-actions");
-
-    if (!heroActions) {
-        return;
-    }
-
-    const existing = document.querySelector("[data-dashboard-control='true']");
-
-    if (existing) {
-        return;
-    }
-
-    const refreshButton = createControlButton(
-        "Refresh Systems",
-        refreshDashboard,
-        "button-secondary"
-    );
-
-    const diagnosticsButton = createControlButton(
-        "Run Diagnostics",
-        runFullDiagnostics,
-        "button-secondary"
-    );
-
-    const resetButton = createControlButton(
-        "Reset Chat",
-        clearChat,
-        "button-secondary"
-    );
-
-    refreshButton.dataset.dashboardControl = "true";
-    diagnosticsButton.dataset.dashboardControl = "true";
-    resetButton.dataset.dashboardControl = "true";
-
-    heroActions.appendChild(refreshButton);
-    heroActions.appendChild(diagnosticsButton);
-    heroActions.appendChild(resetButton);
-}
-
-
-function injectMlVisualHooks() {
-    const capabilityPanel = document.querySelector(".panel .tag-wrap");
-
-    if (!capabilityPanel) {
-        return;
-    }
-
-    const existing = capabilityPanel.querySelector("[data-generated-tag='ml-runtime']");
-
-    if (existing) {
-        return;
-    }
-
-    const mlTag = document.createElement("span");
-    mlTag.className = "tag purple";
-    mlTag.textContent = "Future ML Ops";
-    mlTag.dataset.generatedTag = "ml-runtime";
-
-    const ragTag = document.createElement("span");
-    ragTag.className = "tag purple";
-    ragTag.textContent = "Future RAG";
-    ragTag.dataset.generatedTag = "rag-runtime";
-
-    capabilityPanel.appendChild(mlTag);
-    capabilityPanel.appendChild(ragTag);
-}
-
-
-/* ============================================================
-SECTION 17 - POLLING SYSTEM
-============================================================ */
-
-function startPolling() {
-    stopPolling();
-
-    dashboardState.polling.statusIntervalId = setInterval(
-        refreshDashboard,
-        AUSSEM1_DASHBOARD.refresh.statusMs
-    );
-
-    dashboardState.polling.healthIntervalId = setInterval(
-        runHealthCheck,
-        AUSSEM1_DASHBOARD.refresh.healthMs
-    );
-}
-
-
-function stopPolling() {
-    if (dashboardState.polling.statusIntervalId) {
-        clearInterval(dashboardState.polling.statusIntervalId);
-        dashboardState.polling.statusIntervalId = null;
-    }
-
-    if (dashboardState.polling.healthIntervalId) {
-        clearInterval(dashboardState.polling.healthIntervalId);
-        dashboardState.polling.healthIntervalId = null;
-    }
-}
-
-
-/* ============================================================
-SECTION 18 - KEYBOARD SHORTCUTS
-============================================================ */
-
-function bindKeyboardShortcuts() {
-    document.addEventListener("keydown", async (event) => {
-        const isControl = event.ctrlKey || event.metaKey;
-
-        if (!isControl) {
+        if (!form) {
             return;
         }
 
-        if (event.key.toLowerCase() === "r") {
+        form.addEventListener("submit", function (event) {
             event.preventDefault();
-            await refreshDashboard();
+
+            const messageInput = byId(SELECTORS.messageInput);
+            const propertyInput = byId(SELECTORS.propertyAddress);
+
+            const message = messageInput ? messageInput.value : "";
+            const propertyAddress = propertyInput ? propertyInput.value : "";
+
+            if (messageInput) {
+                messageInput.value = "";
+            }
+
+            submitChat(message, propertyAddress);
+        });
+    }
+
+    function bindHeroForm() {
+        const form = byId(SELECTORS.heroPropertyForm);
+
+        if (!form) {
+            return;
         }
 
-        if (event.key.toLowerCase() === "d") {
-            event.preventDefault();
-            await runFullDiagnostics();
+        if (form.dataset.aussemBound === "true") {
+            return;
         }
 
-        if (event.key.toLowerCase() === "k") {
+        form.dataset.aussemBound = "true";
+
+        form.addEventListener("submit", function (event) {
             event.preventDefault();
 
-            const input = byId(AUSSEM1_DASHBOARD.selectors.messageInput);
+            const heroAddress = byId(SELECTORS.heroPropertyAddress);
+            const heroQuestion = byId(SELECTORS.heroPropertyQuestion);
+            const propertyAddress = byId(SELECTORS.propertyAddress);
+            const messageInput = byId(SELECTORS.messageInput);
+            const liveChat = byId(SELECTORS.liveChat);
 
-            if (input) {
-                input.focus();
+            const addressValue = heroAddress ? heroAddress.value.trim() : "";
+            const questionValue = heroQuestion ? heroQuestion.value.trim() : "";
+
+            const finalQuestion = questionValue ||
+                `Analyze this property using source-backed rules: ${addressValue}`;
+
+            if (propertyAddress) {
+                propertyAddress.value = addressValue;
+            }
+
+            if (messageInput) {
+                messageInput.value = finalQuestion;
+            }
+
+            if (liveChat) {
+                liveChat.scrollIntoView({
+                    behavior: "smooth",
+                    block: "start"
+                });
+            }
+
+            submitChat(finalQuestion, addressValue);
+        });
+    }
+
+
+    /* ============================================================
+    SECTION 09 - METRIC EXTRACTION
+    ============================================================ */
+
+    function pickNumber(...values) {
+        for (const value of values) {
+            const number = Number(value);
+
+            if (Number.isFinite(number)) {
+                return number;
             }
         }
 
-        if (event.key.toLowerCase() === "l") {
-            event.preventDefault();
-            clearChat();
-        }
-    });
-}
-
-
-/* ============================================================
-SECTION 19 - STARTUP SEQUENCE
-============================================================ */
-
-async function initializeDashboard() {
-    if (dashboardState.initialized) {
-        return;
+        return 0;
     }
 
-    dashboardState.initialized = true;
+    function extractMetric(payload, paths) {
+        for (const path of paths) {
+            const value = getPath(payload, path);
 
-    bindChatForm();
-    bindHeroPropertyForm();
-    bindKeyboardShortcuts();
+            if (value !== undefined && value !== null) {
+                return value;
+            }
+        }
 
-    injectDashboardControlBar();
-    injectMlVisualHooks();
+        return 0;
+    }
 
-    await loadBootstrap();
-    await verifyStaticAssets();
-    await refreshDashboard();
-    await runHealthCheck();
+    function getPath(object, path) {
+        if (!object || !path) {
+            return undefined;
+        }
 
-    startPolling();
+        const parts = path.split(".");
+        let current = object;
 
-    addSystemMessage(
-        "Aussem1 dashboard control system is active. Live chat, property preview, metrics, memory, training status, and diagnostics are connected."
-    );
-}
+        for (const part of parts) {
+            if (current === null || current === undefined) {
+                return undefined;
+            }
+
+            current = current[part];
+        }
+
+        return current;
+    }
+
+    function extractDashboardMetrics() {
+        const statusPayload = state.lastStatusPayload || {};
+        const bootstrapPayload = state.lastBootstrapPayload || {};
+        const memoryPayload = state.lastMemoryPayload || {};
+        const trainingPayload = state.lastTrainingPayload || {};
+        const reviewPayload = state.lastReviewPayload || {};
+
+        return {
+            messages: pickNumber(
+                extractMetric(statusPayload, [
+                    "data.memory.message_count",
+                    "memory.message_count",
+                    "memory_messages",
+                    "message_count"
+                ]),
+                extractMetric(bootstrapPayload, [
+                    "data.memory.message_count",
+                    "memory.message_count"
+                ]),
+                extractMetric(memoryPayload, [
+                    "data.message_count",
+                    "message_count",
+                    "total_messages",
+                    "memory.total_messages"
+                ])
+            ),
+            sessions: pickNumber(
+                extractMetric(statusPayload, [
+                    "data.memory.session_count",
+                    "memory.session_count",
+                    "session_count"
+                ]),
+                extractMetric(memoryPayload, [
+                    "data.session_count",
+                    "session_count",
+                    "total_sessions",
+                    "memory.total_sessions"
+                ])
+            ),
+            training: pickNumber(
+                extractMetric(statusPayload, [
+                    "data.training.record_count",
+                    "training.record_count",
+                    "training_records"
+                ]),
+                extractMetric(trainingPayload, [
+                    "data.record_count",
+                    "record_count",
+                    "total_records",
+                    "training.total_records"
+                ])
+            ),
+            review: pickNumber(
+                extractMetric(statusPayload, [
+                    "data.training.review_queue_count",
+                    "training.review_queue_count",
+                    "review_queue_count"
+                ]),
+                extractMetric(reviewPayload, [
+                    "data.review_count",
+                    "review_count",
+                    "queue_count",
+                    "items.length"
+                ])
+            )
+        };
+    }
 
 
-/* ============================================================
-SECTION 20 - SAFE DOM READY BOOT
-============================================================ */
+    /* ============================================================
+    SECTION 10 - METRIC RENDERING
+    ============================================================ */
 
-if (document.readyState === "loading") {
-    document.addEventListener("DOMContentLoaded", initializeDashboard);
-} else {
-    initializeDashboard();
-}
+    function renderMetrics() {
+        const metrics = extractDashboardMetrics();
+
+        setText(SELECTORS.metricMessages, formatInteger(metrics.messages));
+        setText(SELECTORS.metricSessions, formatInteger(metrics.sessions));
+        setText(SELECTORS.metricTraining, formatInteger(metrics.training));
+        setText(SELECTORS.metricReview, formatInteger(metrics.review));
+        setText(SELECTORS.lastUpdated, `Updated ${nowLabel()}`);
+    }
+
+    function buildTag(label, type = "blue") {
+        return `<span class="tag ${escapeHtml(type)}">${escapeHtml(label)}</span>`;
+    }
+
+    function renderPanelItems(panelId, items, fallback) {
+        const panel = byId(panelId);
+
+        if (!panel) {
+            return;
+        }
+
+        if (!items || items.length === 0) {
+            panel.innerHTML = `<div class="log-item">${escapeHtml(fallback)}</div>`;
+            return;
+        }
+
+        panel.innerHTML = items
+            .slice(0, DEFAULTS.maxPanelItems)
+            .map(function (item) {
+                return `<div class="log-item">${escapeHtml(item)}</div>`;
+            })
+            .join("");
+    }
+
+    function renderTrainingPanel() {
+        const payload = state.lastTrainingPayload || {};
+        const reviewPayload = state.lastReviewPayload || {};
+
+        const items = [];
+
+        const status = getPath(payload, "status") ||
+            getPath(payload, "data.status") ||
+            getPath(payload, "training.status");
+
+        if (status) {
+            items.push(`Training status: ${status}`);
+        }
+
+        const count = pickNumber(
+            getPath(payload, "record_count"),
+            getPath(payload, "data.record_count"),
+            getPath(payload, "training.record_count")
+        );
+
+        items.push(`Training records: ${formatInteger(count)}`);
+
+        const reviewCount = pickNumber(
+            getPath(reviewPayload, "review_count"),
+            getPath(reviewPayload, "data.review_count"),
+            getPath(reviewPayload, "queue_count")
+        );
+
+        items.push(`Review queue: ${formatInteger(reviewCount)}`);
+
+        items.push("Low-confidence answers remain review-gated before learning.");
+
+        renderPanelItems(
+            SELECTORS.trainingPanel,
+            items,
+            "Training intelligence unavailable."
+        );
+    }
+
+    function renderMemoryPanel() {
+        const payload = state.lastMemoryPayload || {};
+        const items = [];
+
+        const status = getPath(payload, "status") ||
+            getPath(payload, "data.status") ||
+            getPath(payload, "memory.status");
+
+        if (status) {
+            items.push(`Memory status: ${status}`);
+        }
+
+        const messageCount = pickNumber(
+            getPath(payload, "message_count"),
+            getPath(payload, "data.message_count"),
+            getPath(payload, "memory.message_count"),
+            getPath(payload, "total_messages")
+        );
+
+        const sessionCount = pickNumber(
+            getPath(payload, "session_count"),
+            getPath(payload, "data.session_count"),
+            getPath(payload, "memory.session_count"),
+            getPath(payload, "total_sessions")
+        );
+
+        items.push(`Stored messages: ${formatInteger(messageCount)}`);
+        items.push(`Tracked sessions: ${formatInteger(sessionCount)}`);
+
+        if (state.currentPropertyAddress) {
+            items.push(`Current property context: ${state.currentPropertyAddress}`);
+        } else {
+            items.push("Current property context: none selected");
+        }
+
+        renderPanelItems(
+            SELECTORS.memoryPanel,
+            items,
+            "Memory intelligence unavailable."
+        );
+    }
 
 
-/* ============================================================
-SECTION 21 - DEVELOPER CONSOLE EXPORTS
-============================================================ */
+    /* ============================================================
+    SECTION 11 - RAW PAYLOAD RENDERING
+    ============================================================ */
 
-window.AUSSEM1_DASHBOARD = AUSSEM1_DASHBOARD;
+    function buildRawPayload() {
+        return {
+            dashboard: AUSSEM_DASHBOARD,
+            session: {
+                session_id: state.sessionId,
+                current_property_address: state.currentPropertyAddress,
+                message_count: state.messageCount,
+                busy: state.busy
+            },
+            endpoints: {
+                health: compactEndpointResult(state.endpointResults.health),
+                platform: compactEndpointResult(state.endpointResults.platform),
+                routes: compactEndpointResult(state.endpointResults.routes),
+                diagnostics: compactEndpointResult(state.endpointResults.diagnostics),
+                ai_status: compactEndpointResult(state.endpointResults.aiStatus),
+                property_status: compactEndpointResult(state.endpointResults.propertyStatus),
+                properties_health: compactEndpointResult(state.endpointResults.propertiesHealth),
+                properties_readiness: compactEndpointResult(state.endpointResults.propertiesReadiness),
+                dashboard_status: compactEndpointResult(state.endpointResults.dashboardStatus),
+                memory_status: compactEndpointResult(state.endpointResults.memoryStatus),
+                training_status: compactEndpointResult(state.endpointResults.trainingStatus)
+            },
+            property_intelligence: extractPropertyStatusSummary(),
+            governance: {
+                mock_properties_allowed: false,
+                fabricated_listing_status_allowed: false,
+                fabricated_property_values_allowed: false,
+                public_records_are_not_listing_status: true,
+                listing_status_requires_authorized_feed: true,
+                assessment_is_not_market_value: true,
+                gis_is_not_legal_survey: true
+            },
+            warnings: state.warnings.slice(-10),
+            errors: state.errors.slice(-10),
+            updated_at: nowIso()
+        };
+    }
 
-window.aussem1DashboardState = dashboardState;
+    function compactEndpointResult(result) {
+        if (!result) {
+            return {
+                checked: false
+            };
+        }
 
-window.aussem1DashboardControls = {
-    refreshDashboard,
-    loadBootstrap,
-    runHealthCheck,
-    runFullDiagnostics,
-    runPropertyPreview,
-    searchMemory,
-    clearChat,
-    stopPolling,
-    startPolling,
-    submitChatMessage
-};
+        return {
+            checked: true,
+            ok: result.ok,
+            status: result.status,
+            statusText: result.statusText,
+            durationMs: result.durationMs,
+            error: result.error,
+            retrievedAt: result.retrievedAt,
+            payload: result.payload
+        };
+    }
+
+    function extractPropertyStatusSummary() {
+        const payload = state.lastPropertyStatusPayload || {};
+        const propertyRouter = getPath(payload, "router") || {};
+        const files = getPath(payload, "files") || {};
+        const governance = getPath(payload, "governance") || {};
+
+        return {
+            router_loaded: propertyRouter.loaded ?? null,
+            router_error: propertyRouter.error ?? null,
+            models_exists: getPath(files, "property_models.exists") ?? null,
+            public_records_engine_exists: getPath(files, "public_records_engine.exists") ?? null,
+            governance
+        };
+    }
+
+    function renderRawPayload() {
+        const element = byId(SELECTORS.rawPayload);
+
+        if (!element) {
+            return;
+        }
+
+        element.textContent = prettyJson(buildRawPayload());
+    }
 
 
-/* ============================================================
-END OF FILE
-============================================================ */
+    /* ============================================================
+    SECTION 12 - DASHBOARD REFRESH
+    ============================================================ */
+
+    async function refreshCoreStatus() {
+        const results = await Promise.allSettled([
+            safeEndpoint("health", API.health),
+            safeEndpoint("platform", API.platform),
+            safeEndpoint("routes", API.routes),
+            safeEndpoint("diagnostics", API.diagnostics),
+            safeEndpoint("aiStatus", API.aiStatus),
+            safeEndpoint("propertyStatus", API.propertyStatus),
+            safeEndpoint("propertiesHealth", API.propertiesHealth),
+            safeEndpoint("propertiesReadiness", API.propertiesReadiness),
+            safeEndpoint("dashboardStatus", API.dashboardStatus),
+            safeEndpoint("dashboardBootstrap", API.dashboardBootstrap),
+            safeEndpoint("memoryStatus", API.chatMemoryStatus),
+            safeEndpoint("trainingStatus", API.chatTrainingStatus),
+            safeEndpoint("reviewQueue", API.chatReviewQueue),
+            safeEndpoint("promptStatus", API.chatPromptStatus)
+        ]);
+
+        for (const result of results) {
+            if (result.status === "rejected") {
+                state.errors.push({
+                    type: "refresh_error",
+                    message: result.reason ? String(result.reason) : "Unknown refresh error",
+                    at: nowIso()
+                });
+            }
+        }
+
+        state.lastHealthPayload = state.endpointResults.health?.payload || null;
+        state.lastDiagnosticsPayload = state.endpointResults.diagnostics?.payload || null;
+        state.lastPropertyStatusPayload = state.endpointResults.propertyStatus?.payload || null;
+        state.lastPropertyRouterPayload = state.endpointResults.propertiesHealth?.payload || null;
+        state.lastStatusPayload = state.endpointResults.dashboardStatus?.payload || null;
+        state.lastBootstrapPayload = state.endpointResults.dashboardBootstrap?.payload || null;
+        state.lastMemoryPayload = state.endpointResults.memoryStatus?.payload || null;
+        state.lastTrainingPayload = state.endpointResults.trainingStatus?.payload || null;
+        state.lastReviewPayload = state.endpointResults.reviewQueue?.payload || null;
+        state.lastPromptPayload = state.endpointResults.promptStatus?.payload || null;
+    }
+
+    async function refreshDashboard() {
+        await refreshCoreStatus();
+
+        renderMetrics();
+        renderTrainingPanel();
+        renderMemoryPanel();
+        renderRawPayload();
+        renderReadinessNotices();
+    }
+
+    function renderReadinessNotices() {
+        const propertyStatus = state.lastPropertyStatusPayload;
+        const propertyHealth = state.endpointResults.propertiesHealth;
+
+        if (!state.initialized) {
+            return;
+        }
+
+        if (propertyStatus && propertyStatus.router && propertyStatus.router.loaded === false) {
+            renderSystemNotice(
+                `Property router is not loaded: ${propertyStatus.router.error || "unknown error"}`,
+                "warning"
+            );
+        }
+
+        if (propertyHealth && propertyHealth.ok === false) {
+            renderSystemNotice(
+                "Property API health endpoint is not currently available. Check /diagnostics and /property-intelligence/status.",
+                "warning"
+            );
+        }
+    }
+
+
+    /* ============================================================
+    SECTION 13 - PROPERTY PREVIEW SUPPORT
+    ============================================================ */
+
+    async function previewProperty(address) {
+        const cleanAddress = safeString(address);
+
+        if (!cleanAddress) {
+            return null;
+        }
+
+        const result = await safeEndpoint("propertyPreview", API.propertyPreview, {
+            method: "POST",
+            body: {
+                address: cleanAddress,
+                strict_source_mode: true,
+                source: "dashboard_preview"
+            }
+        });
+
+        return result;
+    }
+
+    async function propertyRouterHealthCheck() {
+        const health = await safeEndpoint("propertiesHealth", API.propertiesHealth);
+        const readiness = await safeEndpoint("propertiesReadiness", API.propertiesReadiness);
+
+        return {
+            health,
+            readiness
+        };
+    }
+
+
+    /* ============================================================
+    SECTION 14 - KEYBOARD AND UI SHORTCUTS
+    ============================================================ */
+
+    function bindKeyboardShortcuts() {
+        document.addEventListener("keydown", function (event) {
+            const isMac = navigator.platform.toUpperCase().includes("MAC");
+            const commandPressed = isMac ? event.metaKey : event.ctrlKey;
+
+            if (commandPressed && event.key.toLowerCase() === "k") {
+                event.preventDefault();
+
+                const messageInput = byId(SELECTORS.messageInput);
+
+                if (messageInput) {
+                    messageInput.focus();
+                }
+            }
+
+            if (commandPressed && event.key.toLowerCase() === "r") {
+                event.preventDefault();
+                refreshDashboard();
+            }
+        });
+    }
+
+    function bindDynamicActionButtons() {
+        document.addEventListener("click", function (event) {
+            const target = event.target;
+
+            if (!target || !target.matches) {
+                return;
+            }
+
+            if (target.matches("[data-aussem-refresh]")) {
+                event.preventDefault();
+                refreshDashboard();
+            }
+
+            if (target.matches("[data-aussem-property-health]")) {
+                event.preventDefault();
+                propertyRouterHealthCheck().then(renderRawPayload);
+            }
+        });
+    }
+
+
+    /* ============================================================
+    SECTION 15 - STARTUP SELF TESTS
+    ============================================================ */
+
+    async function verifyStaticAssets() {
+        const checks = await Promise.allSettled([
+            fetch("/static/css/dashboard.css", { method: "HEAD" }),
+            fetch("/static/js/dashboard.js", { method: "HEAD" })
+        ]);
+
+        const cssOk = checks[0].status === "fulfilled" && checks[0].value.ok;
+        const jsOk = checks[1].status === "fulfilled" && checks[1].value.ok;
+
+        state.endpointResults.staticAssets = {
+            checked: true,
+            cssOk,
+            jsOk,
+            checkedAt: nowIso()
+        };
+
+        if (!cssOk) {
+            state.warnings.push({
+                type: "static_asset_warning",
+                message: "Dashboard CSS did not pass HEAD verification.",
+                at: nowIso()
+            });
+        }
+
+        if (!jsOk) {
+            state.warnings.push({
+                type: "static_asset_warning",
+                message: "Dashboard JS did not pass HEAD verification.",
+                at: nowIso()
+            });
+        }
+    }
+
+    function renderStartupMessage() {
+        renderSystemNotice(
+            [
+                "Aussem1 dashboard controller loaded.",
+                "Strict source mode is active.",
+                "Public records can support parcel, tax, deed, GIS, MOD-IV, and ownership-reference context.",
+                "Current listing status and current listing price require a future authorized listing feed."
+            ].join("\n"),
+            "ready"
+        );
+    }
+
+
+    /* ============================================================
+    SECTION 16 - INITIALIZATION
+    ============================================================ */
+
+    async function initializeDashboard() {
+        state.sessionId = makeSessionId();
+
+        setText(SELECTORS.sessionId, `Session: ${state.sessionId.slice(0, 18)}…`);
+
+        bindChatForm();
+        bindHeroForm();
+        bindKeyboardShortcuts();
+        bindDynamicActionButtons();
+
+        renderStartupMessage();
+
+        await verifyStaticAssets();
+        await refreshDashboard();
+
+        if (state.refreshTimer) {
+            window.clearInterval(state.refreshTimer);
+        }
+
+        state.refreshTimer = window.setInterval(function () {
+            refreshDashboard();
+        }, DEFAULTS.refreshIntervalMs);
+
+        state.initialized = true;
+
+        window.AussemDashboard = {
+            state,
+            api: API,
+            refresh: refreshDashboard,
+            submitChat,
+            previewProperty,
+            propertyRouterHealthCheck,
+            version: AUSSEM_DASHBOARD.version,
+            phase: AUSSEM_DASHBOARD.phase
+        };
+    }
+
+    if (document.readyState === "loading") {
+        document.addEventListener("DOMContentLoaded", initializeDashboard);
+    } else {
+        initializeDashboard();
+    }
+}());
