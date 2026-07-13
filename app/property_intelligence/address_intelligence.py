@@ -1,412 +1,295 @@
-"""
-============================================================
-AUSSEM REAL ESTATE
-PHASE 5.10 - ADDRESS INTELLIGENCE ENGINE
-FILE: app/property_intelligence/address_intelligence.py
+# ============================================================
+# AUSSEM1
+# PHASE 2.41 PART 1.00
+# ENTERPRISE ADDRESS INTELLIGENCE ENGINE
+# FILE: app/property_intelligence/address_intelligence.py
+# PURPOSE:
+# Convert a user-entered property address, block/lot signal, owner
+# reference, or location-style query into a clean, normalized,
+# confidence-scored, public-record-ready property search request.
+#
+# This engine provides:
+# - deterministic address parsing
+# - municipality detection
+# - county detection
+# - state detection
+# - ZIP detection
+# - block / lot / qualifier detection
+# - Morris County routing
+# - New Jersey routing
+# - public-record search preparation
+# - address confidence scoring
+# - ambiguous-address manual-review flags
+# - property-intelligence request generation
+# - stable address fingerprints
+# - safe no-network operation
+#
+# CORE GOVERNANCE:
+# - No mock property facts.
+# - No fabricated property values.
+# - No fabricated listing status.
+# - No fabricated owner conclusions.
+# - No fabricated sale history.
+# - Address intelligence prepares source-backed lookup.
+# - It does not claim public-record facts by itself.
+# - It does not estimate market value by itself.
+# - It does not claim active listing status.
+#
+# AUTHOR:
+# Ryan Schuren
+#
+# ASSISTANT:
+# Alfred
+#
+# STATUS:
+# ENTERPRISE ADDRESS INTELLIGENCE ENGINE ACTIVE
+# ============================================================
 
-PURPOSE:
-Enterprise address normalization, parsing, validation, matching,
-deduplication, confidence scoring, geographic enrichment preparation,
-parcel-resolution support, and deterministic address fingerprinting for
-the Aussem Real Estate property-intelligence platform.
 
-DESIGN GOALS:
-1. Work without paid APIs or network access.
-2. Produce deterministic canonical address representations.
-3. Preserve original input and parsing provenance.
-4. Support U.S. residential real-estate workflows.
-5. Handle common abbreviations, unit formats, punctuation, and casing.
-6. Generate match keys for property/entity resolution.
-7. Expose typed, testable service interfaces.
-8. Remain compatible with future USPS, geocoder, parcel, and MLS adapters.
-============================================================
-"""
+# ============================================================
+# SECTION 01 - ENTERPRISE IMPORTS
+# ============================================================
 
 from __future__ import annotations
 
-import enum
 import hashlib
 import json
 import math
 import re
 import unicodedata
-from dataclasses import asdict, dataclass, field
-from decimal import Decimal
-from typing import Any, Iterable, Mapping, Optional, Protocol, Sequence
+from dataclasses import asdict
+from dataclasses import dataclass
+from dataclasses import field
+from datetime import UTC
+from datetime import datetime
+from enum import StrEnum
+from typing import Any
+from typing import Iterable
+from typing import Mapping
+from typing import Sequence
 
 
 # ============================================================
-# SECTION 01 - CONSTANTS
+# SECTION 02 - MODULE METADATA
 # ============================================================
 
-DEFAULT_COUNTRY_CODE = "US"
-DEFAULT_CONFIDENCE = Decimal("0.50")
-HIGH_CONFIDENCE = Decimal("0.90")
-MEDIUM_CONFIDENCE = Decimal("0.70")
-LOW_CONFIDENCE = Decimal("0.40")
+ADDRESS_INTELLIGENCE_ENGINE_NAME = (
+    "Aussem1 Enterprise Address Intelligence Engine"
+)
+
+ADDRESS_INTELLIGENCE_ENGINE_VERSION = "0.2.0"
+
+ADDRESS_INTELLIGENCE_ENGINE_PHASE = "PHASE 2.41 PART 1.00"
+
+ADDRESS_INTELLIGENCE_ENGINE_STATUS = (
+    "enterprise_address_intelligence_engine_active"
+)
+
+ADDRESS_INTELLIGENCE_RELEASE_CHANNEL = "development"
+
+
+# ============================================================
+# SECTION 03 - GOVERNANCE
+# ============================================================
+
+ADDRESS_INTELLIGENCE_GOVERNANCE = {
+    "mock_property_facts_allowed": False,
+    "fabricated_property_values_allowed": False,
+    "fabricated_listing_status_allowed": False,
+    "fabricated_owner_conclusions_allowed": False,
+    "fabricated_sale_history_allowed": False,
+    "network_required": False,
+    "address_intelligence_can_estimate_value": False,
+    "address_intelligence_can_claim_listing_status": False,
+    "address_intelligence_can_claim_public_records": False,
+    "address_intelligence_can_prepare_public_record_search": True,
+    "manual_review_for_ambiguous_input": True,
+    "manual_review_for_missing_search_signal": True,
+    "source_attribution_required_downstream": True,
+}
+
+
+# ============================================================
+# SECTION 04 - REGEX CONSTANTS
+# ============================================================
 
 WHITESPACE_RE = re.compile(r"\s+")
-NON_ALNUM_SPACE_RE = re.compile(r"[^A-Z0-9#\-/ ]+")
-ZIP_RE = re.compile(r"^(?P<zip5>\d{5})(?:[-\s]?(?P<zip4>\d{4}))?$")
+
+NON_ADDRESS_TEXT_RE = re.compile(r"[^A-Z0-9#&/\-., ]+")
+
+ZIP_RE = re.compile(
+    r"(?P<zip5>\b\d{5}\b)(?:[-\s]?(?P<zip4>\d{4}))?"
+)
+
+STATE_ZIP_RE = re.compile(
+    r"\b(?P<state>[A-Z]{2})\s+(?P<zip>\d{5}(?:-\d{4})?)\b"
+)
+
 HOUSE_NUMBER_RE = re.compile(
     r"^(?P<number>\d+[A-Z]?(?:-\d+[A-Z]?)?)(?:\s+|$)",
     re.IGNORECASE,
 )
+
 UNIT_RE = re.compile(
-    r"(?:\s|,)+(?:APT|APARTMENT|UNIT|STE|SUITE|#)\s*([A-Z0-9\-]+)\s*$",
+    r"(?:\s|,)+(?:APT|APARTMENT|UNIT|STE|SUITE|#|FL|FLOOR|BLDG|BUILDING)\s*([A-Z0-9\-]+)\s*$",
     re.IGNORECASE,
 )
+
 PO_BOX_RE = re.compile(
     r"^(?:P(?:OST)?\.?\s*O(?:FFICE)?\.?\s+BOX|PO\s+BOX)\s+([A-Z0-9\-]+)$",
     re.IGNORECASE,
 )
+
 RURAL_ROUTE_RE = re.compile(
     r"^(?:RR|RURAL\s+ROUTE)\s*([A-Z0-9\-]+)\s+(?:BOX\s*)?([A-Z0-9\-]+)$",
     re.IGNORECASE,
 )
 
+BLOCK_LOT_RE = re.compile(
+    r"\b(?:BLOCK|BLK)\s*[:#\-]?\s*(?P<block>[A-Z0-9.\-]+)\b.*?\b(?:LOT|LT)\s*[:#\-]?\s*(?P<lot>[A-Z0-9.\-]+)\b",
+    re.IGNORECASE,
+)
 
-# ============================================================
-# SECTION 02 - ENUMERATIONS
-# ============================================================
+LOT_BLOCK_RE = re.compile(
+    r"\b(?:LOT|LT)\s*[:#\-]?\s*(?P<lot>[A-Z0-9.\-]+)\b.*?\b(?:BLOCK|BLK)\s*[:#\-]?\s*(?P<block>[A-Z0-9.\-]+)\b",
+    re.IGNORECASE,
+)
 
-class StringEnum(str, enum.Enum):
-    @classmethod
-    def values(cls) -> list[str]:
-        return [member.value for member in cls]
+QUALIFIER_RE = re.compile(
+    r"\b(?:QUALIFIER|QUAL|Q)\s*[:#\-]?\s*(?P<qualifier>[A-Z0-9.\-]+)\b",
+    re.IGNORECASE,
+)
 
-
-class AddressType(StringEnum):
-    STREET = "street"
-    PO_BOX = "po_box"
-    RURAL_ROUTE = "rural_route"
-    INTERSECTION = "intersection"
-    LANDMARK = "landmark"
-    UNKNOWN = "unknown"
-
-
-class AddressQuality(StringEnum):
-    VERIFIED = "verified"
-    HIGH = "high"
-    MEDIUM = "medium"
-    LOW = "low"
-    INVALID = "invalid"
-    UNKNOWN = "unknown"
-
-
-class MatchLevel(StringEnum):
-    EXACT = "exact"
-    CANONICAL = "canonical"
-    STREET = "street"
-    PARCEL = "parcel"
-    FUZZY = "fuzzy"
-    NONE = "none"
-
-
-class ComponentStatus(StringEnum):
-    PRESENT = "present"
-    NORMALIZED = "normalized"
-    INFERRED = "inferred"
-    MISSING = "missing"
-    INVALID = "invalid"
-
-
-class GeocodePrecision(StringEnum):
-    ROOFTOP = "rooftop"
-    PARCEL = "parcel"
-    BUILDING = "building"
-    STREET = "street"
-    ZIP_CODE = "zip_code"
-    CITY = "city"
-    COUNTY = "county"
-    STATE = "state"
-    UNKNOWN = "unknown"
+MUNICIPALITY_HINT_RE = re.compile(
+    r"\b(?:BOROUGH|TOWNSHIP|TWP|TOWN|CITY|VILLAGE)\b",
+    re.IGNORECASE,
+)
 
 
 # ============================================================
-# SECTION 03 - NORMALIZATION TABLES
+# SECTION 05 - NEW JERSEY / MORRIS COUNTY CONTEXT
 # ============================================================
 
-STREET_SUFFIXES: dict[str, str] = {
-    "ALLEY": "ALY",
-    "ALLY": "ALY",
-    "ALY": "ALY",
-    "ANNEX": "ANX",
-    "ANEX": "ANX",
-    "ANX": "ANX",
-    "ARCADE": "ARC",
-    "ARC": "ARC",
-    "AV": "AVE",
-    "AVE": "AVE",
-    "AVEN": "AVE",
-    "AVENU": "AVE",
-    "AVENUE": "AVE",
-    "BAYOO": "BYU",
-    "BAYOU": "BYU",
-    "BEACH": "BCH",
-    "BEND": "BND",
-    "BLF": "BLF",
-    "BLUFF": "BLF",
-    "BLUFFS": "BLFS",
-    "BOT": "BTM",
-    "BOTTOM": "BTM",
-    "BOUL": "BLVD",
-    "BOULEVARD": "BLVD",
-    "BR": "BR",
-    "BRANCH": "BR",
-    "BRDGE": "BRG",
-    "BRIDGE": "BRG",
-    "BROOK": "BRK",
-    "BROOKS": "BRKS",
-    "BURG": "BG",
-    "BURGS": "BGS",
-    "BYP": "BYP",
-    "BYPASS": "BYP",
-    "BYPA": "BYP",
-    "CAMP": "CP",
-    "CANYON": "CYN",
-    "CAPE": "CPE",
-    "CAUSEWAY": "CSWY",
-    "CENTER": "CTR",
-    "CENTERS": "CTRS",
-    "CENTRE": "CTR",
-    "CIRCLE": "CIR",
-    "CIRCLES": "CIRS",
-    "CLIFF": "CLF",
-    "CLIFFS": "CLFS",
-    "CLUB": "CLB",
-    "COMMON": "CMN",
-    "COMMONS": "CMNS",
-    "CORNER": "COR",
-    "CORNERS": "CORS",
-    "COURSE": "CRSE",
-    "COURT": "CT",
-    "COURTS": "CTS",
-    "COVE": "CV",
-    "COVES": "CVS",
-    "CREEK": "CRK",
-    "CRESCENT": "CRES",
-    "CREST": "CRST",
-    "CROSSING": "XING",
-    "CROSSROAD": "XRD",
-    "CURVE": "CURV",
-    "DALE": "DL",
-    "DAM": "DM",
-    "DIVIDE": "DV",
-    "DR": "DR",
-    "DRIVE": "DR",
-    "DRIVES": "DRS",
-    "ESTATE": "EST",
-    "ESTATES": "ESTS",
-    "EXPRESSWAY": "EXPY",
-    "EXTENSION": "EXT",
-    "EXTENSIONS": "EXTS",
-    "FALL": "FALL",
-    "FALLS": "FLS",
-    "FERRY": "FRY",
-    "FIELD": "FLD",
-    "FIELDS": "FLDS",
-    "FLAT": "FLT",
-    "FLATS": "FLTS",
-    "FORD": "FRD",
-    "FORDS": "FRDS",
-    "FOREST": "FRST",
-    "FORGE": "FRG",
-    "FORGES": "FRGS",
-    "FORK": "FRK",
-    "FORKS": "FRKS",
-    "FORT": "FT",
-    "FREEWAY": "FWY",
-    "GARDEN": "GDN",
-    "GARDENS": "GDNS",
-    "GATEWAY": "GTWY",
-    "GLEN": "GLN",
-    "GLENS": "GLNS",
-    "GREEN": "GRN",
-    "GREENS": "GRNS",
-    "GROVE": "GRV",
-    "GROVES": "GRVS",
-    "HARBOR": "HBR",
-    "HARBORS": "HBRS",
-    "HAVEN": "HVN",
-    "HEIGHTS": "HTS",
-    "HIGHWAY": "HWY",
-    "HILL": "HL",
-    "HILLS": "HLS",
-    "HOLLOW": "HOLW",
-    "INLET": "INLT",
-    "ISLAND": "IS",
-    "ISLANDS": "ISS",
-    "ISLE": "ISLE",
-    "JUNCTION": "JCT",
-    "JUNCTIONS": "JCTS",
-    "KEY": "KY",
-    "KEYS": "KYS",
-    "KNOLL": "KNL",
-    "KNOLLS": "KNLS",
-    "LAKE": "LK",
-    "LAKES": "LKS",
-    "LAND": "LAND",
-    "LANDING": "LNDG",
-    "LANE": "LN",
-    "LIGHT": "LGT",
-    "LIGHTS": "LGTS",
-    "LOAF": "LF",
-    "LOCK": "LCK",
-    "LOCKS": "LCKS",
-    "LODGE": "LDG",
-    "LOOP": "LOOP",
-    "MALL": "MALL",
-    "MANOR": "MNR",
-    "MANORS": "MNRS",
-    "MEADOW": "MDW",
-    "MEADOWS": "MDWS",
-    "MEWS": "MEWS",
-    "MILL": "ML",
-    "MILLS": "MLS",
-    "MISSION": "MSN",
-    "MOTORWAY": "MTWY",
-    "MOUNT": "MT",
-    "MOUNTAIN": "MTN",
-    "MOUNTAINS": "MTNS",
-    "NECK": "NCK",
-    "ORCHARD": "ORCH",
-    "OVAL": "OVAL",
-    "OVERPASS": "OPAS",
-    "PARK": "PARK",
-    "PARKS": "PARK",
-    "PARKWAY": "PKWY",
-    "PARKWAYS": "PKWY",
-    "PASS": "PASS",
-    "PASSAGE": "PSGE",
-    "PATH": "PATH",
-    "PIKE": "PIKE",
-    "PINE": "PNE",
-    "PINES": "PNES",
-    "PLACE": "PL",
-    "PLAIN": "PLN",
-    "PLAINS": "PLNS",
-    "PLAZA": "PLZ",
-    "POINT": "PT",
-    "POINTS": "PTS",
-    "PORT": "PRT",
-    "PORTS": "PRTS",
-    "PRAIRIE": "PR",
-    "RADIAL": "RADL",
-    "RANCH": "RNCH",
-    "RAPID": "RPD",
-    "RAPIDS": "RPDS",
-    "REST": "RST",
-    "RIDGE": "RDG",
-    "RIDGES": "RDGS",
-    "RIVER": "RIV",
-    "ROAD": "RD",
-    "ROADS": "RDS",
-    "ROUTE": "RTE",
-    "ROW": "ROW",
-    "RUE": "RUE",
-    "RUN": "RUN",
-    "SHOAL": "SHL",
-    "SHOALS": "SHLS",
-    "SHORE": "SHR",
-    "SHORES": "SHRS",
-    "SKYWAY": "SKWY",
-    "SPRING": "SPG",
-    "SPRINGS": "SPGS",
-    "SPUR": "SPUR",
-    "SPURS": "SPUR",
-    "SQUARE": "SQ",
-    "SQUARES": "SQS",
-    "ST": "ST",
-    "STATION": "STA",
-    "STRAVENUE": "STRA",
-    "STREAM": "STRM",
-    "STREET": "ST",
-    "STREETS": "STS",
-    "SUMMIT": "SMT",
-    "TERRACE": "TER",
-    "THROUGHWAY": "TRWY",
-    "TRACE": "TRCE",
-    "TRACK": "TRAK",
-    "TRAFFICWAY": "TRFY",
-    "TRAIL": "TRL",
-    "TRAILER": "TRLR",
-    "TUNNEL": "TUNL",
-    "TURNPIKE": "TPKE",
-    "UNDERPASS": "UPAS",
-    "UNION": "UN",
-    "UNIONS": "UNS",
-    "VALLEY": "VLY",
-    "VALLEYS": "VLYS",
-    "VIADUCT": "VIA",
-    "VIEW": "VW",
-    "VIEWS": "VWS",
-    "VILLAGE": "VLG",
-    "VILLAGES": "VLGS",
-    "VILLE": "VL",
-    "VISTA": "VIS",
-    "WALK": "WALK",
-    "WALKS": "WALK",
-    "WALL": "WALL",
-    "WAY": "WAY",
-    "WAYS": "WAYS",
-    "WELL": "WL",
-    "WELLS": "WLS",
+DEFAULT_COUNTRY_CODE = "US"
+
+DEFAULT_STATE_CODE = "NJ"
+
+DEFAULT_COUNTY = "Morris"
+
+MORRIS_COUNTY_MUNICIPALITIES = {
+    "BOONTON": "Boonton",
+    "BOONTON TOWNSHIP": "Boonton Township",
+    "BUTLER": "Butler",
+    "CHATHAM": "Chatham",
+    "CHATHAM BOROUGH": "Chatham Borough",
+    "CHATHAM TOWNSHIP": "Chatham Township",
+    "CHESTER": "Chester",
+    "CHESTER BOROUGH": "Chester Borough",
+    "CHESTER TOWNSHIP": "Chester Township",
+    "DENVILLE": "Denville",
+    "DOVER": "Dover",
+    "EAST HANOVER": "East Hanover",
+    "FLORHAM PARK": "Florham Park",
+    "HANOVER": "Hanover",
+    "HANOVER TOWNSHIP": "Hanover Township",
+    "HARDING": "Harding",
+    "HARDING TOWNSHIP": "Harding Township",
+    "JEFFERSON": "Jefferson",
+    "JEFFERSON TOWNSHIP": "Jefferson Township",
+    "KINNELON": "Kinnelon",
+    "LINCOLN PARK": "Lincoln Park",
+    "LONG HILL": "Long Hill",
+    "LONG HILL TOWNSHIP": "Long Hill Township",
+    "MADISON": "Madison",
+    "MENDHAM": "Mendham",
+    "MENDHAM BOROUGH": "Mendham Borough",
+    "MENDHAM TOWNSHIP": "Mendham Township",
+    "MINE HILL": "Mine Hill",
+    "MONTVILLE": "Montville",
+    "MONTVILLE TOWNSHIP": "Montville Township",
+    "MORRIS": "Morris Township",
+    "MORRIS TOWNSHIP": "Morris Township",
+    "MORRIS PLAINS": "Morris Plains",
+    "MORRISTOWN": "Morristown",
+    "MOUNT ARLINGTON": "Mount Arlington",
+    "MOUNT OLIVE": "Mount Olive",
+    "MOUNT OLIVE TOWNSHIP": "Mount Olive Township",
+    "MOUNTAIN LAKES": "Mountain Lakes",
+    "NETCONG": "Netcong",
+    "PARSIPPANY": "Parsippany-Troy Hills",
+    "PARSIPPANY TROY HILLS": "Parsippany-Troy Hills",
+    "PARSIPPANY-TROY HILLS": "Parsippany-Troy Hills",
+    "PASSAIC": "Passaic Township",
+    "PASSAIC TOWNSHIP": "Passaic Township",
+    "PEQUANNOCK": "Pequannock",
+    "PEQUANNOCK TOWNSHIP": "Pequannock Township",
+    "RANDOLPH": "Randolph",
+    "RANDOLPH TOWNSHIP": "Randolph Township",
+    "RIVERDALE": "Riverdale",
+    "ROCKAWAY": "Rockaway",
+    "ROCKAWAY BOROUGH": "Rockaway Borough",
+    "ROCKAWAY TOWNSHIP": "Rockaway Township",
+    "ROXBURY": "Roxbury",
+    "ROXBURY TOWNSHIP": "Roxbury Township",
+    "VICTORY GARDENS": "Victory Gardens",
+    "WASHINGTON": "Washington Township",
+    "WASHINGTON TOWNSHIP": "Washington Township",
+    "WHARTON": "Wharton",
 }
 
-DIRECTIONALS: dict[str, str] = {
-    "N": "N",
-    "NORTH": "N",
-    "S": "S",
-    "SOUTH": "S",
-    "E": "E",
-    "EAST": "E",
-    "W": "W",
-    "WEST": "W",
-    "NE": "NE",
-    "NORTHEAST": "NE",
-    "NORTH EAST": "NE",
-    "NW": "NW",
-    "NORTHWEST": "NW",
-    "NORTH WEST": "NW",
-    "SE": "SE",
-    "SOUTHEAST": "SE",
-    "SOUTH EAST": "SE",
-    "SW": "SW",
-    "SOUTHWEST": "SW",
-    "SOUTH WEST": "SW",
+MORRIS_COUNTY_ZIP_HINTS = {
+    "07005",
+    "07034",
+    "07035",
+    "07045",
+    "07046",
+    "07054",
+    "07058",
+    "07082",
+    "07405",
+    "07435",
+    "07801",
+    "07803",
+    "07828",
+    "07834",
+    "07836",
+    "07840",
+    "07842",
+    "07845",
+    "07847",
+    "07849",
+    "07850",
+    "07852",
+    "07853",
+    "07856",
+    "07857",
+    "07866",
+    "07869",
+    "07876",
+    "07878",
+    "07885",
+    "07920",
+    "07924",
+    "07926",
+    "07927",
+    "07928",
+    "07930",
+    "07932",
+    "07933",
+    "07935",
+    "07936",
+    "07940",
+    "07945",
+    "07946",
+    "07950",
+    "07960",
+    "07970",
+    "07976",
+    "07980",
+    "07981",
 }
 
-UNIT_DESIGNATORS: dict[str, str] = {
-    "APARTMENT": "APT",
-    "APT": "APT",
-    "BUILDING": "BLDG",
-    "BLDG": "BLDG",
-    "DEPARTMENT": "DEPT",
-    "DEPT": "DEPT",
-    "FLOOR": "FL",
-    "FL": "FL",
-    "HANGAR": "HNGR",
-    "HNGR": "HNGR",
-    "LOT": "LOT",
-    "OFFICE": "OFC",
-    "OFC": "OFC",
-    "PENTHOUSE": "PH",
-    "PH": "PH",
-    "ROOM": "RM",
-    "RM": "RM",
-    "SPACE": "SPC",
-    "SPC": "SPC",
-    "STOP": "STOP",
-    "SUITE": "STE",
-    "STE": "STE",
-    "TRAILER": "TRLR",
-    "TRLR": "TRLR",
-    "UNIT": "UNIT",
-    "#": "UNIT",
-}
-
-STATE_CODES: dict[str, str] = {
+STATE_NAME_TO_CODE = {
     "ALABAMA": "AL",
     "ALASKA": "AK",
     "ARIZONA": "AZ",
@@ -460,66 +343,568 @@ STATE_CODES: dict[str, str] = {
     "WYOMING": "WY",
 }
 
-VALID_STATE_CODES = frozenset(STATE_CODES.values())
+VALID_STATE_CODES = set(STATE_NAME_TO_CODE.values())
 
-NUMBER_WORDS: dict[str, str] = {
-    "ZERO": "0",
-    "ONE": "1",
-    "TWO": "2",
-    "THREE": "3",
-    "FOUR": "4",
-    "FIVE": "5",
-    "SIX": "6",
-    "SEVEN": "7",
-    "EIGHT": "8",
-    "NINE": "9",
-    "TEN": "10",
-    "ELEVEN": "11",
-    "TWELVE": "12",
-    "THIRTEEN": "13",
-    "FOURTEEN": "14",
-    "FIFTEEN": "15",
-    "SIXTEEN": "16",
-    "SEVENTEEN": "17",
-    "EIGHTEEN": "18",
-    "NINETEEN": "19",
-    "TWENTY": "20",
+
+# ============================================================
+# SECTION 06 - NORMALIZATION TABLES
+# ============================================================
+
+STREET_SUFFIXES = {
+    "AV": "AVE",
+    "AVE": "AVE",
+    "AVENUE": "AVE",
+    "BLVD": "BLVD",
+    "BOULEVARD": "BLVD",
+    "CIR": "CIR",
+    "CIRCLE": "CIR",
+    "CT": "CT",
+    "COURT": "CT",
+    "DR": "DR",
+    "DRIVE": "DR",
+    "HWY": "HWY",
+    "HIGHWAY": "HWY",
+    "LANE": "LN",
+    "LN": "LN",
+    "PL": "PL",
+    "PLACE": "PL",
+    "PKWY": "PKWY",
+    "PARKWAY": "PKWY",
+    "RD": "RD",
+    "ROAD": "RD",
+    "ST": "ST",
+    "STREET": "ST",
+    "TER": "TER",
+    "TERRACE": "TER",
+    "TRL": "TRL",
+    "TRAIL": "TRL",
+    "WAY": "WAY",
+    "WY": "WAY",
+}
+
+DIRECTIONALS = {
+    "N": "N",
+    "NORTH": "N",
+    "S": "S",
+    "SOUTH": "S",
+    "E": "E",
+    "EAST": "E",
+    "W": "W",
+    "WEST": "W",
+    "NE": "NE",
+    "NORTHEAST": "NE",
+    "NW": "NW",
+    "NORTHWEST": "NW",
+    "SE": "SE",
+    "SOUTHEAST": "SE",
+    "SW": "SW",
+    "SOUTHWEST": "SW",
+}
+
+UNIT_DESIGNATORS = {
+    "APARTMENT": "APT",
+    "APT": "APT",
+    "BUILDING": "BLDG",
+    "BLDG": "BLDG",
+    "FLOOR": "FL",
+    "FL": "FL",
+    "SUITE": "STE",
+    "STE": "STE",
+    "UNIT": "UNIT",
+    "#": "UNIT",
 }
 
 
 # ============================================================
-# SECTION 04 - DATA CONTRACTS
+# SECTION 07 - ENUMERATIONS
 # ============================================================
 
-@dataclass(slots=True)
+class AddressInputType(StrEnum):
+    STREET_ADDRESS = "street_address"
+    BLOCK_LOT = "block_lot"
+    OWNER_REFERENCE = "owner_reference"
+    PO_BOX = "po_box"
+    RURAL_ROUTE = "rural_route"
+    INTERSECTION = "intersection"
+    LANDMARK = "landmark"
+    UNKNOWN = "unknown"
+
+
+class AddressQuality(StrEnum):
+    VERIFIED = "verified"
+    HIGH = "high"
+    MEDIUM = "medium"
+    LOW = "low"
+    INVALID = "invalid"
+    UNKNOWN = "unknown"
+
+
+class AddressMatchLevel(StrEnum):
+    EXACT = "exact"
+    CANONICAL = "canonical"
+    PARCEL = "parcel"
+    STRONG = "strong"
+    FUZZY = "fuzzy"
+    NONE = "none"
+
+
+class AddressComponentStatus(StrEnum):
+    PRESENT = "present"
+    NORMALIZED = "normalized"
+    INFERRED = "inferred"
+    MISSING = "missing"
+    INVALID = "invalid"
+
+
+class PublicRecordRoutingStatus(StrEnum):
+    READY = "ready"
+    PARTIAL = "partial"
+    OUTSIDE_INITIAL_SCOPE = "outside_initial_scope"
+    MISSING_SEARCH_SIGNAL = "missing_search_signal"
+    MANUAL_REVIEW_REQUIRED = "manual_review_required"
+    UNKNOWN = "unknown"
+
+
+class PublicRecordConnectorTarget(StrEnum):
+    MORRIS_TAX_BOARD = "nj_morris_tax_board_connector"
+    MORRIS_CLERK = "nj_morris_clerk_connector"
+    MORRIS_GIS = "nj_morris_gis_connector"
+    NJ_STATE_MODIV = "nj_state_modiv_connector"
+
+
+class ManualReviewReason(StrEnum):
+    MISSING_HOUSE_NUMBER = "missing_house_number"
+    MISSING_STREET_NAME = "missing_street_name"
+    MISSING_MUNICIPALITY = "missing_municipality"
+    MISSING_STATE = "missing_state"
+    MISSING_SEARCH_SIGNAL = "missing_search_signal"
+    AMBIGUOUS_MUNICIPALITY = "ambiguous_municipality"
+    OUTSIDE_INITIAL_SCOPE = "outside_initial_scope"
+    BLOCK_WITHOUT_LOT = "block_without_lot"
+    LOT_WITHOUT_BLOCK = "lot_without_block"
+    LOW_CONFIDENCE = "low_confidence"
+    PO_BOX_NOT_PROPERTY_PARCEL = "po_box_not_property_parcel"
+    OWNER_REFERENCE_ONLY = "owner_reference_only"
+
+
+# ============================================================
+# SECTION 08 - UTILITY FUNCTIONS
+# ============================================================
+
+def utc_now() -> str:
+    """
+    Return current UTC timestamp.
+    """
+
+    return datetime.now(UTC).isoformat()
+
+
+def strip_accents(value: str) -> str:
+    """
+    Remove accents from text.
+    """
+
+    normalized = unicodedata.normalize("NFKD", value)
+
+    return "".join(
+        character
+        for character in normalized
+        if not unicodedata.combining(character)
+    )
+
+
+def safe_string(value: Any) -> str:
+    """
+    Convert value to stripped string.
+    """
+
+    if value is None:
+        return ""
+
+    return str(value).strip()
+
+
+def normalize_text(value: Any) -> str | None:
+    """
+    Normalize address text for parsing.
+    """
+
+    text = safe_string(value)
+
+    if not text:
+        return None
+
+    text = strip_accents(text)
+    text = text.upper().strip()
+    text = text.replace("’", "'").replace("`", "'")
+    text = text.replace(".", " ")
+    text = NON_ADDRESS_TEXT_RE.sub(" ", text)
+    text = WHITESPACE_RE.sub(" ", text).strip()
+
+    return text or None
+
+
+def normalize_display_text(value: Any) -> str | None:
+    """
+    Normalize display text into title case.
+    """
+
+    text = safe_string(value)
+
+    if not text:
+        return None
+
+    return " ".join(text.split()).title()
+
+
+def normalize_identifier(value: Any) -> str | None:
+    """
+    Normalize value into alphanumeric identifier.
+    """
+
+    text = normalize_text(value)
+
+    if not text:
+        return None
+
+    normalized = re.sub(r"[^A-Z0-9]", "", text)
+
+    return normalized or None
+
+
+def normalize_state(value: Any) -> str | None:
+    """
+    Normalize state name or code.
+    """
+
+    text = normalize_text(value)
+
+    if not text:
+        return None
+
+    if text in VALID_STATE_CODES:
+        return text
+
+    return STATE_NAME_TO_CODE.get(text)
+
+
+def normalize_county(value: Any) -> str | None:
+    """
+    Normalize county name.
+    """
+
+    text = normalize_text(value)
+
+    if not text:
+        return None
+
+    if text.endswith(" COUNTY"):
+        text = text[:-7].strip()
+
+    return text.title()
+
+
+def normalize_municipality(value: Any) -> str | None:
+    """
+    Normalize municipality name.
+    """
+
+    text = normalize_text(value)
+
+    if not text:
+        return None
+
+    if text in MORRIS_COUNTY_MUNICIPALITIES:
+        return MORRIS_COUNTY_MUNICIPALITIES[text]
+
+    return text.title()
+
+
+def normalize_postal_code(value: Any) -> tuple[str | None, str | None]:
+    """
+    Normalize ZIP or ZIP+4.
+    """
+
+    text = normalize_text(value)
+
+    if not text:
+        return None, None
+
+    compact = text.replace(" ", "")
+
+    match = ZIP_RE.search(compact)
+
+    if not match:
+        return None, None
+
+    return match.group("zip5"), match.group("zip4")
+
+
+def normalize_suffix(value: Any) -> str | None:
+    """
+    Normalize street suffix.
+    """
+
+    text = normalize_text(value)
+
+    if not text:
+        return None
+
+    return STREET_SUFFIXES.get(text, text)
+
+
+def normalize_directional(value: Any) -> str | None:
+    """
+    Normalize street directional.
+    """
+
+    text = normalize_text(value)
+
+    if not text:
+        return None
+
+    return DIRECTIONALS.get(text, text)
+
+
+def normalize_unit_type(value: Any) -> str | None:
+    """
+    Normalize unit designator.
+    """
+
+    text = normalize_text(value)
+
+    if not text:
+        return None
+
+    return UNIT_DESIGNATORS.get(text, text)
+
+
+def normalize_block_lot_value(value: Any) -> str | None:
+    """
+    Normalize block, lot, or qualifier value.
+    """
+
+    text = normalize_text(value)
+
+    if not text:
+        return None
+
+    cleaned = re.sub(r"[^A-Z0-9.\-]", "", text)
+
+    return cleaned or None
+
+
+def stable_hash(value: Any) -> str:
+    """
+    Create deterministic SHA-256 hash.
+    """
+
+    payload = json.dumps(
+        value,
+        sort_keys=True,
+        default=str,
+        separators=(",", ":"),
+    )
+
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+
+def clamp_confidence(value: float) -> float:
+    """
+    Clamp confidence to 0..1.
+    """
+
+    if not math.isfinite(float(value)):
+        return 0.0
+
+    return max(0.0, min(1.0, float(value)))
+
+
+def confidence_quality(score: float) -> AddressQuality:
+    """
+    Convert confidence to quality.
+    """
+
+    score = clamp_confidence(score)
+
+    if score >= 0.95:
+        return AddressQuality.VERIFIED
+
+    if score >= 0.82:
+        return AddressQuality.HIGH
+
+    if score >= 0.62:
+        return AddressQuality.MEDIUM
+
+    if score > 0:
+        return AddressQuality.LOW
+
+    return AddressQuality.UNKNOWN
+
+
+def levenshtein_distance(left: str, right: str) -> int:
+    """
+    Compute Levenshtein edit distance.
+    """
+
+    if left == right:
+        return 0
+
+    if not left:
+        return len(right)
+
+    if not right:
+        return len(left)
+
+    previous = list(range(len(right) + 1))
+
+    for left_index, left_char in enumerate(left, start=1):
+        current = [left_index]
+
+        for right_index, right_char in enumerate(right, start=1):
+            insert_cost = current[right_index - 1] + 1
+            delete_cost = previous[right_index] + 1
+            substitute_cost = previous[right_index - 1] + (
+                left_char != right_char
+            )
+            current.append(
+                min(insert_cost, delete_cost, substitute_cost)
+            )
+
+        previous = current
+
+    return previous[-1]
+
+
+def similarity(left: Any, right: Any) -> float:
+    """
+    Return normalized text similarity.
+    """
+
+    left_value = normalize_text(left) or ""
+    right_value = normalize_text(right) or ""
+
+    if not left_value and not right_value:
+        return 1.0
+
+    if not left_value or not right_value:
+        return 0.0
+
+    distance = levenshtein_distance(left_value, right_value)
+    maximum = max(len(left_value), len(right_value))
+
+    return clamp_confidence(1.0 - (distance / maximum))
+
+
+def object_to_dict(value: Any) -> Any:
+    """
+    Serialize dataclasses and nested structures.
+    """
+
+    if value is None:
+        return None
+
+    if isinstance(value, StrEnum):
+        return value.value
+
+    if hasattr(value, "to_dict") and callable(value.to_dict):
+        return value.to_dict()
+
+    if hasattr(value, "__dataclass_fields__"):
+        return {
+            key: object_to_dict(item)
+            for key, item in asdict(value).items()
+        }
+
+    if isinstance(value, Mapping):
+        return {
+            str(key): object_to_dict(item)
+            for key, item in value.items()
+        }
+
+    if isinstance(value, Sequence) and not isinstance(
+        value,
+        (str, bytes, bytearray),
+    ):
+        return [
+            object_to_dict(item)
+            for item in value
+        ]
+
+    return value
+
+
+# ============================================================
+# SECTION 09 - DATA CONTRACTS
+# ============================================================
+
+@dataclass
+class AddressIssue:
+    """
+    Address parsing, normalization, or routing issue.
+    """
+
+    code: str
+    message: str
+    severity: str = "warning"
+    component: str | None = None
+    manual_review_required: bool = False
+    suggested_value: str | None = None
+    metadata: dict[str, Any] = field(default_factory=dict)
+
+    def to_dict(self) -> dict[str, Any]:
+        return object_to_dict(asdict(self))
+
+
+@dataclass
 class AddressComponents:
+    """
+    Parsed normalized address components.
+    """
+
     original: str
-    address_type: AddressType = AddressType.UNKNOWN
-    house_number: Optional[str] = None
-    predirectional: Optional[str] = None
-    street_name: Optional[str] = None
-    street_suffix: Optional[str] = None
-    postdirectional: Optional[str] = None
-    unit_type: Optional[str] = None
-    unit_number: Optional[str] = None
-    po_box: Optional[str] = None
-    rural_route: Optional[str] = None
-    rural_box: Optional[str] = None
-    city: Optional[str] = None
-    county: Optional[str] = None
-    state_code: Optional[str] = None
-    postal_code: Optional[str] = None
-    postal_code_plus4: Optional[str] = None
+    input_type: str = AddressInputType.UNKNOWN.value
+    house_number: str | None = None
+    predirectional: str | None = None
+    street_name: str | None = None
+    street_suffix: str | None = None
+    postdirectional: str | None = None
+    unit_type: str | None = None
+    unit_number: str | None = None
+    po_box: str | None = None
+    rural_route: str | None = None
+    rural_box: str | None = None
+    municipality: str | None = None
+    county: str | None = None
+    state_code: str | None = None
+    postal_code: str | None = None
+    postal_code_plus4: str | None = None
     country_code: str = DEFAULT_COUNTRY_CODE
-    latitude: Optional[Decimal] = None
-    longitude: Optional[Decimal] = None
-    parcel_number: Optional[str] = None
+    block: str | None = None
+    lot: str | None = None
+    qualifier: str | None = None
+    owner_reference: str | None = None
+    raw_query: str | None = None
+    latitude: float | None = None
+    longitude: float | None = None
+    parcel_id: str | None = None
 
     def street_line(self, include_unit: bool = True) -> str:
-        if self.address_type == AddressType.PO_BOX and self.po_box:
+        """
+        Return normalized street line.
+        """
+
+        if self.input_type == AddressInputType.PO_BOX.value and self.po_box:
             return f"PO BOX {self.po_box}"
-        if self.address_type == AddressType.RURAL_ROUTE:
-            pieces = ["RR", self.rural_route or "", "BOX", self.rural_box or ""]
+
+        if self.input_type == AddressInputType.RURAL_ROUTE.value:
+            pieces = [
+                "RR",
+                self.rural_route,
+                "BOX",
+                self.rural_box,
+            ]
+
             return " ".join(piece for piece in pieces if piece)
 
         pieces = [
@@ -529,27 +914,57 @@ class AddressComponents:
             self.street_suffix,
             self.postdirectional,
         ]
+
         line = " ".join(piece for piece in pieces if piece)
+
         if include_unit and self.unit_number:
             unit_type = self.unit_type or "UNIT"
             line = f"{line} {unit_type} {self.unit_number}".strip()
+
         return line
 
     def locality_line(self) -> str:
-        city_state = " ".join(
-            value for value in [self.city, self.state_code] if value
-        )
+        """
+        Return locality line.
+        """
+
         postal = self.postal_code or ""
+
         if self.postal_code and self.postal_code_plus4:
             postal = f"{self.postal_code}-{self.postal_code_plus4}"
-        return " ".join(value for value in [city_state, postal] if value)
 
-    def canonical(self, include_unit: bool = True) -> str:
+        return " ".join(
+            part
+            for part in [
+                self.municipality,
+                self.state_code,
+                postal,
+            ]
+            if part
+        )
+
+    def canonical_address(self, include_unit: bool = True) -> str:
+        """
+        Return canonical display address.
+        """
+
+        if self.block and self.lot and not self.street_line():
+            parts = [
+                f"Block {self.block}",
+                f"Lot {self.lot}",
+                f"Qual {self.qualifier}" if self.qualifier else None,
+                self.municipality,
+                self.county,
+                self.state_code,
+            ]
+
+            return ", ".join(part for part in parts if part)
+
         return ", ".join(
             part
             for part in [
                 self.street_line(include_unit=include_unit),
-                self.city,
+                self.municipality,
                 " ".join(
                     part
                     for part in [
@@ -562,403 +977,398 @@ class AddressComponents:
                     ]
                     if part
                 ),
-                self.country_code if self.country_code != DEFAULT_COUNTRY_CODE else None,
             ]
             if part
         )
 
+    def has_street_signal(self) -> bool:
+        """
+        Return whether components have street address signal.
+        """
+
+        return bool(self.house_number and self.street_name)
+
+    def has_block_lot_signal(self) -> bool:
+        """
+        Return whether components have block and lot.
+        """
+
+        return bool(self.block and self.lot)
+
+    def has_owner_signal(self) -> bool:
+        """
+        Return whether components have owner reference only.
+        """
+
+        return bool(self.owner_reference)
+
     def to_dict(self) -> dict[str, Any]:
-        result = asdict(self)
-        result["address_type"] = self.address_type.value
-        for key in ("latitude", "longitude"):
-            if result[key] is not None:
-                result[key] = str(result[key])
-        return result
+        return object_to_dict(asdict(self))
 
 
-@dataclass(slots=True)
-class AddressIssue:
-    code: str
-    message: str
-    severity: str = "warning"
-    component: Optional[str] = None
-    suggested_value: Optional[str] = None
+@dataclass
+class PublicRecordSearchPreparation:
+    """
+    Public-record lookup preparation output.
+    """
+
+    routing_status: str
+    state_code: str | None = None
+    county: str | None = None
+    municipality: str | None = None
+    jurisdiction_label: str | None = None
+    primary_query_mode: str = "unknown"
+    connector_targets: list[str] = field(default_factory=list)
+    raw_query: str | None = None
+    street_address: str | None = None
+    normalized_address: str | None = None
+    block: str | None = None
+    lot: str | None = None
+    qualifier: str | None = None
+    owner_reference: str | None = None
+    postal_code: str | None = None
+    morris_county_ready: bool = False
+    nj_state_ready: bool = False
+    manual_review_required: bool = False
+    unavailable_reasons: list[str] = field(default_factory=list)
+    unsupported_claims: list[str] = field(default_factory=list)
+    metadata: dict[str, Any] = field(default_factory=dict)
+
+    def to_dict(self) -> dict[str, Any]:
+        return object_to_dict(asdict(self))
 
 
-@dataclass(slots=True)
+@dataclass
 class AddressAnalysis:
+    """
+    Complete address intelligence result.
+    """
+
+    request_id: str
     components: AddressComponents
-    quality: AddressQuality
-    confidence: Decimal
+    quality: str
+    confidence: float
     canonical_address: str
     normalized_street_address: str
     match_key: str
     property_match_key: str
     fingerprint: str
+    public_record_search: PublicRecordSearchPreparation
     issues: list[AddressIssue] = field(default_factory=list)
     transformations: list[str] = field(default_factory=list)
-    component_status: dict[str, ComponentStatus] = field(default_factory=dict)
-    provider_payload: dict[str, Any] = field(default_factory=dict)
+    component_status: dict[str, str] = field(default_factory=dict)
+    manual_review_required: bool = False
+    created_at: str = field(default_factory=utc_now)
+    metadata: dict[str, Any] = field(default_factory=dict)
 
     @property
     def is_valid(self) -> bool:
-        return self.quality != AddressQuality.INVALID
+        """
+        Return whether address analysis is usable.
+        """
+
+        return self.quality != AddressQuality.INVALID.value
 
     def to_dict(self) -> dict[str, Any]:
-        return {
-            "components": self.components.to_dict(),
-            "quality": self.quality.value,
-            "confidence": str(self.confidence),
-            "canonical_address": self.canonical_address,
-            "normalized_street_address": self.normalized_street_address,
-            "match_key": self.match_key,
-            "property_match_key": self.property_match_key,
-            "fingerprint": self.fingerprint,
-            "issues": [asdict(issue) for issue in self.issues],
-            "transformations": list(self.transformations),
-            "component_status": {
-                key: value.value for key, value in self.component_status.items()
-            },
-            "provider_payload": dict(self.provider_payload),
-        }
+        return object_to_dict(asdict(self))
 
 
-@dataclass(slots=True)
+@dataclass
 class AddressMatchResult:
-    level: MatchLevel
-    score: Decimal
+    """
+    Address match comparison result.
+    """
+
+    level: str
+    score: float
     is_match: bool
-    component_scores: dict[str, Decimal]
+    component_scores: dict[str, float]
     reasons: list[str]
     left: AddressAnalysis
     right: AddressAnalysis
 
     def to_dict(self) -> dict[str, Any]:
-        return {
-            "level": self.level.value,
-            "score": str(self.score),
-            "is_match": self.is_match,
-            "component_scores": {
-                key: str(value) for key, value in self.component_scores.items()
-            },
-            "reasons": list(self.reasons),
-            "left": self.left.to_dict(),
-            "right": self.right.to_dict(),
-        }
+        return object_to_dict(asdict(self))
 
 
-@dataclass(slots=True)
-class GeocodeResult:
-    latitude: Decimal
-    longitude: Decimal
-    precision: GeocodePrecision
-    confidence: Decimal
-    provider: str
-    formatted_address: Optional[str] = None
-    parcel_number: Optional[str] = None
-    county: Optional[str] = None
-    raw_payload: dict[str, Any] = field(default_factory=dict)
+@dataclass
+class BatchAddressResult:
+    """
+    Batch address processing result.
+    """
+
+    total: int
+    valid: int
+    invalid: int
+    duplicate_groups: int
+    analyses: list[AddressAnalysis]
+    groups: list[list[AddressAnalysis]]
+
+    def to_dict(self) -> dict[str, Any]:
+        return object_to_dict(asdict(self))
 
 
 # ============================================================
-# SECTION 05 - PROVIDER PROTOCOLS
-# ============================================================
-
-class AddressValidationProvider(Protocol):
-    name: str
-
-    def validate(self, components: AddressComponents) -> Mapping[str, Any]:
-        ...
-
-
-class GeocodingProvider(Protocol):
-    name: str
-
-    def geocode(self, components: AddressComponents) -> Optional[GeocodeResult]:
-        ...
-
-
-class ParcelLookupProvider(Protocol):
-    name: str
-
-    def lookup_parcel(self, components: AddressComponents) -> Mapping[str, Any]:
-        ...
-
-
-# ============================================================
-# SECTION 06 - LOW-LEVEL TEXT HELPERS
-# ============================================================
-
-def strip_accents(value: str) -> str:
-    normalized = unicodedata.normalize("NFKD", value)
-    return "".join(character for character in normalized if not unicodedata.combining(character))
-
-
-def normalize_text(value: Optional[str]) -> Optional[str]:
-    if value is None:
-        return None
-    normalized = strip_accents(str(value)).upper().strip()
-    normalized = normalized.replace("’", "'").replace("`", "'")
-    normalized = normalized.replace(".", " ")
-    normalized = NON_ALNUM_SPACE_RE.sub(" ", normalized)
-    normalized = WHITESPACE_RE.sub(" ", normalized).strip()
-    return normalized or None
-
-
-def normalize_identifier(value: Optional[str]) -> Optional[str]:
-    normalized = normalize_text(value)
-    if not normalized:
-        return None
-    return re.sub(r"[^A-Z0-9]", "", normalized)
-
-
-def normalize_state(value: Optional[str]) -> Optional[str]:
-    normalized = normalize_text(value)
-    if not normalized:
-        return None
-    if normalized in VALID_STATE_CODES:
-        return normalized
-    return STATE_CODES.get(normalized)
-
-
-def normalize_postal_code(value: Optional[str]) -> tuple[Optional[str], Optional[str]]:
-    normalized = normalize_text(value)
-    if not normalized:
-        return None, None
-    compact = normalized.replace(" ", "")
-    match = ZIP_RE.match(compact)
-    if not match:
-        return None, None
-    return match.group("zip5"), match.group("zip4")
-
-
-def normalize_unit_type(value: Optional[str]) -> Optional[str]:
-    normalized = normalize_text(value)
-    if not normalized:
-        return None
-    return UNIT_DESIGNATORS.get(normalized, normalized)
-
-
-def normalize_directional(value: Optional[str]) -> Optional[str]:
-    normalized = normalize_text(value)
-    if not normalized:
-        return None
-    return DIRECTIONALS.get(normalized, normalized)
-
-
-def normalize_suffix(value: Optional[str]) -> Optional[str]:
-    normalized = normalize_text(value)
-    if not normalized:
-        return None
-    return STREET_SUFFIXES.get(normalized, normalized)
-
-
-def stable_hash(value: Any) -> str:
-    serialized = json.dumps(value, sort_keys=True, separators=(",", ":"), default=str)
-    return hashlib.sha256(serialized.encode("utf-8")).hexdigest()
-
-
-def clamp_score(value: Decimal) -> Decimal:
-    return max(Decimal("0"), min(Decimal("1"), value))
-
-
-def levenshtein_distance(left: str, right: str) -> int:
-    if left == right:
-        return 0
-    if not left:
-        return len(right)
-    if not right:
-        return len(left)
-
-    previous = list(range(len(right) + 1))
-    for index_left, char_left in enumerate(left, start=1):
-        current = [index_left]
-        for index_right, char_right in enumerate(right, start=1):
-            insert_cost = current[index_right - 1] + 1
-            delete_cost = previous[index_right] + 1
-            substitute_cost = previous[index_right - 1] + (char_left != char_right)
-            current.append(min(insert_cost, delete_cost, substitute_cost))
-        previous = current
-    return previous[-1]
-
-
-def similarity(left: Optional[str], right: Optional[str]) -> Decimal:
-    left_value = normalize_text(left) or ""
-    right_value = normalize_text(right) or ""
-    if not left_value and not right_value:
-        return Decimal("1")
-    if not left_value or not right_value:
-        return Decimal("0")
-    distance = levenshtein_distance(left_value, right_value)
-    maximum = max(len(left_value), len(right_value))
-    return clamp_score(Decimal("1") - (Decimal(distance) / Decimal(maximum)))
-
-
-# ============================================================
-# SECTION 07 - ADDRESS PARSER
+# SECTION 10 - PARSER
 # ============================================================
 
 class AddressParser:
-    """Deterministic parser for common U.S. property-address formats."""
+    """
+    Deterministic parser for U.S. residential property address input.
+    """
 
     def parse(
         self,
         raw_address: str,
         *,
-        city: Optional[str] = None,
-        state_code: Optional[str] = None,
-        postal_code: Optional[str] = None,
-        county: Optional[str] = None,
+        municipality: str | None = None,
+        county: str | None = None,
+        state_code: str | None = None,
+        postal_code: str | None = None,
+        owner_reference: str | None = None,
         country_code: str = DEFAULT_COUNTRY_CODE,
     ) -> AddressComponents:
-        if not raw_address or not str(raw_address).strip():
+        """
+        Parse raw input into normalized address components.
+        """
+
+        if not safe_string(raw_address):
             raise ValueError("raw_address is required")
 
-        original = str(raw_address).strip()
+        original = safe_string(raw_address)
         normalized = normalize_text(original) or ""
-        inline_street, inline_city, inline_state, inline_zip = self._split_full_address(normalized)
 
-        city_value = normalize_text(city) or inline_city
-        state_value = normalize_state(state_code) or normalize_state(inline_state)
+        block, lot, qualifier = self.extract_block_lot(normalized)
+
+        if block or lot:
+            zip5, zip4 = normalize_postal_code(postal_code)
+            inferred_state = normalize_state(state_code) or self.extract_state(
+                normalized
+            )
+            inferred_municipality = (
+                normalize_municipality(municipality)
+                or self.detect_morris_municipality(normalized)
+            )
+            inferred_county = (
+                normalize_county(county)
+                or self.detect_county(normalized)
+            )
+
+            return AddressComponents(
+                original=original,
+                input_type=AddressInputType.BLOCK_LOT.value,
+                municipality=inferred_municipality,
+                county=inferred_county,
+                state_code=inferred_state or DEFAULT_STATE_CODE,
+                postal_code=zip5,
+                postal_code_plus4=zip4,
+                country_code=country_code,
+                block=block,
+                lot=lot,
+                qualifier=qualifier,
+                owner_reference=normalize_display_text(owner_reference),
+                raw_query=original,
+            )
+
+        street, inline_municipality, inline_state, inline_zip = (
+            self.split_full_address(normalized)
+        )
+
+        municipality_value = (
+            normalize_municipality(municipality)
+            or normalize_municipality(inline_municipality)
+            or self.detect_morris_municipality(normalized)
+        )
+
+        state_value = (
+            normalize_state(state_code)
+            or normalize_state(inline_state)
+            or self.extract_state(normalized)
+        )
+
         zip5, zip4 = normalize_postal_code(postal_code or inline_zip)
 
-        po_box = PO_BOX_RE.match(inline_street)
+        county_value = (
+            normalize_county(county)
+            or self.detect_county(normalized)
+            or self.infer_county_from_zip(zip5)
+            or self.infer_county_from_municipality(municipality_value)
+        )
+
+        po_box = PO_BOX_RE.match(street)
+
         if po_box:
             return AddressComponents(
                 original=original,
-                address_type=AddressType.PO_BOX,
+                input_type=AddressInputType.PO_BOX.value,
                 po_box=po_box.group(1),
-                city=city_value,
-                county=normalize_text(county),
+                municipality=municipality_value,
+                county=county_value,
                 state_code=state_value,
                 postal_code=zip5,
                 postal_code_plus4=zip4,
-                country_code=normalize_text(country_code) or DEFAULT_COUNTRY_CODE,
+                country_code=country_code,
+                raw_query=original,
             )
 
-        rural = RURAL_ROUTE_RE.match(inline_street)
+        rural = RURAL_ROUTE_RE.match(street)
+
         if rural:
             return AddressComponents(
                 original=original,
-                address_type=AddressType.RURAL_ROUTE,
+                input_type=AddressInputType.RURAL_ROUTE.value,
                 rural_route=rural.group(1),
                 rural_box=rural.group(2),
-                city=city_value,
-                county=normalize_text(county),
+                municipality=municipality_value,
+                county=county_value,
                 state_code=state_value,
                 postal_code=zip5,
                 postal_code_plus4=zip4,
-                country_code=normalize_text(country_code) or DEFAULT_COUNTRY_CODE,
+                country_code=country_code,
+                raw_query=original,
             )
 
-        if " & " in f" {inline_street} " or " AND " in f" {inline_street} ":
+        if " & " in f" {street} " or " AND " in f" {street} ":
             return AddressComponents(
                 original=original,
-                address_type=AddressType.INTERSECTION,
-                street_name=inline_street,
-                city=city_value,
-                county=normalize_text(county),
+                input_type=AddressInputType.INTERSECTION.value,
+                street_name=street,
+                municipality=municipality_value,
+                county=county_value,
                 state_code=state_value,
                 postal_code=zip5,
                 postal_code_plus4=zip4,
-                country_code=normalize_text(country_code) or DEFAULT_COUNTRY_CODE,
+                country_code=country_code,
+                raw_query=original,
             )
 
-        return self._parse_street(
+        return self.parse_street(
             original=original,
-            street_line=inline_street,
-            city=city_value,
-            county=normalize_text(county),
+            street_line=street,
+            municipality=municipality_value,
+            county=county_value,
             state_code=state_value,
-            zip5=zip5,
-            zip4=zip4,
-            country_code=normalize_text(country_code) or DEFAULT_COUNTRY_CODE,
+            postal_code=zip5,
+            postal_code_plus4=zip4,
+            country_code=country_code,
+            owner_reference=owner_reference,
         )
 
-    def _split_full_address(
+    def split_full_address(
         self,
         normalized: str,
-    ) -> tuple[str, Optional[str], Optional[str], Optional[str]]:
-        parts = [part.strip() for part in normalized.split(",") if part.strip()]
+    ) -> tuple[str, str | None, str | None, str | None]:
+        """
+        Split full address into street, municipality, state, ZIP.
+        """
+
+        parts = [
+            part.strip()
+            for part in normalized.split(",")
+            if part.strip()
+        ]
 
         if len(parts) >= 3:
             street = parts[0]
-            city = parts[1]
+            municipality = parts[1]
             state_zip = " ".join(parts[2:])
-            state, postal = self._split_state_zip(state_zip)
-            return street, city, state, postal
+            state, postal = self.split_state_zip(state_zip)
+
+            return street, municipality, state, postal
 
         tokens = normalized.split()
+
         if len(tokens) >= 3:
             possible_zip = tokens[-1]
             zip5, _ = normalize_postal_code(possible_zip)
+
             if zip5:
                 possible_state = tokens[-2]
                 state = normalize_state(possible_state)
+
                 if state:
                     body = tokens[:-2]
-                    if len(body) >= 3:
-                        street_end = self._guess_street_end(body)
-                        street = " ".join(body[:street_end])
-                        city = " ".join(body[street_end:]) or None
-                        return street, city, state, possible_zip
+                    street_end = self.guess_street_end(body)
+                    street = " ".join(body[:street_end])
+                    municipality = " ".join(body[street_end:]) or None
+
+                    return street, municipality, state, possible_zip
 
         return normalized, None, None, None
 
     @staticmethod
-    def _split_state_zip(value: str) -> tuple[Optional[str], Optional[str]]:
+    def split_state_zip(value: str) -> tuple[str | None, str | None]:
+        """
+        Split state and ZIP segment.
+        """
+
         tokens = value.split()
+
         if not tokens:
             return None, None
+
         if len(tokens) == 1:
             state = normalize_state(tokens[0])
-            if state:
-                return state, None
             zip5, _ = normalize_postal_code(tokens[0])
-            return None, tokens[0] if zip5 else None
+
+            return state, tokens[0] if zip5 else None
 
         postal = tokens[-1]
         state_text = " ".join(tokens[:-1])
         state = normalize_state(state_text)
         zip5, _ = normalize_postal_code(postal)
+
         if state:
             return state, postal if zip5 else None
 
         state = normalize_state(tokens[0])
+
         return state, postal if zip5 else None
 
     @staticmethod
-    def _guess_street_end(tokens: Sequence[str]) -> int:
+    def guess_street_end(tokens: Sequence[str]) -> int:
+        """
+        Guess where street ends before municipality.
+        """
+
         for index, token in enumerate(tokens):
             if normalize_suffix(token) in set(STREET_SUFFIXES.values()):
                 return index + 1
+
         return min(3, len(tokens))
 
-    def _parse_street(
+    def parse_street(
         self,
         *,
         original: str,
         street_line: str,
-        city: Optional[str],
-        county: Optional[str],
-        state_code: Optional[str],
-        zip5: Optional[str],
-        zip4: Optional[str],
+        municipality: str | None,
+        county: str | None,
+        state_code: str | None,
+        postal_code: str | None,
+        postal_code_plus4: str | None,
         country_code: str,
+        owner_reference: str | None = None,
     ) -> AddressComponents:
-        unit_type, unit_number, without_unit = self._extract_unit(street_line)
+        """
+        Parse a normalized street line.
+        """
+
+        unit_type, unit_number, without_unit = self.extract_unit(street_line)
+
         number_match = HOUSE_NUMBER_RE.match(without_unit)
-        house_number = number_match.group("number").upper() if number_match else None
-        remaining = (
-            without_unit[number_match.end():].strip()
-            if number_match
-            else without_unit.strip()
-        )
+        house_number = None
+        remaining = without_unit.strip()
+
+        if number_match:
+            house_number = number_match.group("number").upper()
+            remaining = without_unit[number_match.end():].strip()
 
         tokens = remaining.split()
+
         predirectional = None
         postdirectional = None
-        suffix = None
+        street_suffix = None
 
         if tokens and normalize_directional(tokens[0]) in DIRECTIONALS.values():
             predirectional = normalize_directional(tokens.pop(0))
@@ -967,158 +1377,289 @@ class AddressParser:
             postdirectional = normalize_directional(tokens.pop())
 
         if tokens and normalize_suffix(tokens[-1]) in STREET_SUFFIXES.values():
-            suffix = normalize_suffix(tokens.pop())
+            street_suffix = normalize_suffix(tokens.pop())
 
         street_name = " ".join(tokens) or None
 
         return AddressComponents(
             original=original,
-            address_type=AddressType.STREET,
+            input_type=AddressInputType.STREET_ADDRESS.value,
             house_number=house_number,
             predirectional=predirectional,
             street_name=street_name,
-            street_suffix=suffix,
+            street_suffix=street_suffix,
             postdirectional=postdirectional,
             unit_type=unit_type,
             unit_number=unit_number,
-            city=city,
+            municipality=municipality,
             county=county,
             state_code=state_code,
-            postal_code=zip5,
-            postal_code_plus4=zip4,
+            postal_code=postal_code,
+            postal_code_plus4=postal_code_plus4,
             country_code=country_code,
+            owner_reference=normalize_display_text(owner_reference),
+            raw_query=original,
         )
 
     @staticmethod
-    def _extract_unit(street_line: str) -> tuple[Optional[str], Optional[str], str]:
+    def extract_unit(
+        street_line: str,
+    ) -> tuple[str | None, str | None, str]:
+        """
+        Extract unit from street line.
+        """
+
         match = UNIT_RE.search(street_line)
+
         if not match:
             return None, None, street_line
 
         matched_text = match.group(0).strip()
         unit_number = match.group(1).upper()
-        prefix = matched_text[: matched_text.upper().find(unit_number)].strip(" ,")
+        prefix = matched_text[: matched_text.upper().find(unit_number)].strip(
+            " ,"
+        )
         unit_type = normalize_unit_type(prefix or "UNIT")
         without_unit = street_line[: match.start()].strip(" ,")
+
         return unit_type, unit_number, without_unit
+
+    @staticmethod
+    def extract_block_lot(
+        normalized: str,
+    ) -> tuple[str | None, str | None, str | None]:
+        """
+        Extract block, lot, qualifier from query.
+        """
+
+        match = BLOCK_LOT_RE.search(normalized) or LOT_BLOCK_RE.search(
+            normalized
+        )
+
+        if not match:
+            return None, None, None
+
+        block = normalize_block_lot_value(match.group("block"))
+        lot = normalize_block_lot_value(match.group("lot"))
+
+        qualifier_match = QUALIFIER_RE.search(normalized)
+        qualifier = (
+            normalize_block_lot_value(qualifier_match.group("qualifier"))
+            if qualifier_match
+            else None
+        )
+
+        return block, lot, qualifier
+
+    @staticmethod
+    def extract_state(normalized: str) -> str | None:
+        """
+        Extract state from normalized text.
+        """
+
+        match = STATE_ZIP_RE.search(normalized)
+
+        if match:
+            return normalize_state(match.group("state"))
+
+        tokens = normalized.split()
+
+        for token in tokens:
+            state = normalize_state(token)
+
+            if state:
+                return state
+
+        for state_name, state_code in STATE_NAME_TO_CODE.items():
+            if state_name in normalized:
+                return state_code
+
+        return None
+
+    @staticmethod
+    def detect_county(normalized: str) -> str | None:
+        """
+        Detect county from input.
+        """
+
+        if "MORRIS COUNTY" in normalized or " MORRIS " in f" {normalized} ":
+            return "Morris"
+
+        return None
+
+    @staticmethod
+    def infer_county_from_zip(zip5: str | None) -> str | None:
+        """
+        Infer Morris County from ZIP hint.
+        """
+
+        if zip5 in MORRIS_COUNTY_ZIP_HINTS:
+            return "Morris"
+
+        return None
+
+    @staticmethod
+    def infer_county_from_municipality(
+        municipality: str | None,
+    ) -> str | None:
+        """
+        Infer county from known Morris municipality.
+        """
+
+        if not municipality:
+            return None
+
+        normalized = normalize_text(municipality)
+
+        if normalized in MORRIS_COUNTY_MUNICIPALITIES:
+            return "Morris"
+
+        return None
+
+    @staticmethod
+    def detect_morris_municipality(normalized: str) -> str | None:
+        """
+        Detect Morris County municipality in address text.
+        """
+
+        best_match: str | None = None
+        best_length = 0
+
+        for key, display in MORRIS_COUNTY_MUNICIPALITIES.items():
+            pattern = f" {key} "
+
+            if pattern in f" {normalized} " and len(key) > best_length:
+                best_match = display
+                best_length = len(key)
+
+        return best_match
 
 
 # ============================================================
-# SECTION 08 - ADDRESS VALIDATOR
+# SECTION 11 - VALIDATOR
 # ============================================================
 
 class AddressValidator:
+    """
+    Validate parsed address components.
+    """
+
     def validate(self, components: AddressComponents) -> list[AddressIssue]:
+        """
+        Validate address and routing readiness.
+        """
+
         issues: list[AddressIssue] = []
 
-        if components.address_type == AddressType.STREET:
+        if not (
+            components.has_street_signal()
+            or components.has_block_lot_signal()
+            or components.has_owner_signal()
+        ):
+            issues.append(
+                AddressIssue(
+                    code=ManualReviewReason.MISSING_SEARCH_SIGNAL.value,
+                    message=(
+                        "Address intelligence needs a street address, "
+                        "block/lot, or owner reference to prepare lookup."
+                    ),
+                    severity="error",
+                    component="raw_query",
+                    manual_review_required=True,
+                )
+            )
+
+        if components.input_type == AddressInputType.STREET_ADDRESS.value:
             if not components.house_number:
                 issues.append(
                     AddressIssue(
-                        code="missing_house_number",
+                        code=ManualReviewReason.MISSING_HOUSE_NUMBER.value,
                         message="Street address is missing a house number.",
                         severity="error",
                         component="house_number",
+                        manual_review_required=True,
                     )
                 )
+
             if not components.street_name:
                 issues.append(
                     AddressIssue(
-                        code="missing_street_name",
+                        code=ManualReviewReason.MISSING_STREET_NAME.value,
                         message="Street address is missing a street name.",
                         severity="error",
                         component="street_name",
+                        manual_review_required=True,
                     )
                 )
 
-        if components.address_type == AddressType.PO_BOX and not components.po_box:
+        if components.input_type == AddressInputType.PO_BOX.value:
             issues.append(
                 AddressIssue(
-                    code="missing_po_box",
-                    message="PO Box address is missing its box number.",
-                    severity="error",
-                    component="po_box",
-                )
-            )
-
-        if components.state_code and components.state_code not in VALID_STATE_CODES:
-            issues.append(
-                AddressIssue(
-                    code="invalid_state",
-                    message="State code is not recognized.",
-                    severity="error",
-                    component="state_code",
-                )
-            )
-
-        if components.postal_code and not ZIP_RE.match(
-            components.postal_code
-            + (
-                f"-{components.postal_code_plus4}"
-                if components.postal_code_plus4
-                else ""
-            )
-        ):
-            issues.append(
-                AddressIssue(
-                    code="invalid_postal_code",
-                    message="Postal code is not a valid ZIP or ZIP+4 format.",
-                    severity="error",
-                    component="postal_code",
-                )
-            )
-
-        if components.latitude is not None and not (
-            Decimal("-90") <= components.latitude <= Decimal("90")
-        ):
-            issues.append(
-                AddressIssue(
-                    code="invalid_latitude",
-                    message="Latitude must be between -90 and 90.",
-                    severity="error",
-                    component="latitude",
-                )
-            )
-
-        if components.longitude is not None and not (
-            Decimal("-180") <= components.longitude <= Decimal("180")
-        ):
-            issues.append(
-                AddressIssue(
-                    code="invalid_longitude",
-                    message="Longitude must be between -180 and 180.",
-                    severity="error",
-                    component="longitude",
-                )
-            )
-
-        if not components.city:
-            issues.append(
-                AddressIssue(
-                    code="missing_city",
-                    message="City is missing.",
+                    code=ManualReviewReason.PO_BOX_NOT_PROPERTY_PARCEL.value,
+                    message=(
+                        "PO Box input may not identify a residential parcel. "
+                        "A street address or block/lot may be required."
+                    ),
                     severity="warning",
-                    component="city",
+                    component="po_box",
+                    manual_review_required=True,
+                )
+            )
+
+        if components.block and not components.lot:
+            issues.append(
+                AddressIssue(
+                    code=ManualReviewReason.BLOCK_WITHOUT_LOT.value,
+                    message="Block was detected without lot.",
+                    severity="warning",
+                    component="lot",
+                    manual_review_required=True,
+                )
+            )
+
+        if components.lot and not components.block:
+            issues.append(
+                AddressIssue(
+                    code=ManualReviewReason.LOT_WITHOUT_BLOCK.value,
+                    message="Lot was detected without block.",
+                    severity="warning",
+                    component="block",
+                    manual_review_required=True,
+                )
+            )
+
+        if not components.municipality:
+            issues.append(
+                AddressIssue(
+                    code=ManualReviewReason.MISSING_MUNICIPALITY.value,
+                    message="Municipality could not be confidently detected.",
+                    severity="warning",
+                    component="municipality",
+                    manual_review_required=True,
                 )
             )
 
         if not components.state_code:
             issues.append(
                 AddressIssue(
-                    code="missing_state",
-                    message="State is missing.",
+                    code=ManualReviewReason.MISSING_STATE.value,
+                    message="State could not be confidently detected.",
                     severity="warning",
                     component="state_code",
+                    suggested_value=DEFAULT_STATE_CODE,
                 )
             )
 
-        if not components.postal_code:
+        if components.state_code and components.state_code != DEFAULT_STATE_CODE:
             issues.append(
                 AddressIssue(
-                    code="missing_postal_code",
-                    message="Postal code is missing.",
-                    severity="warning",
-                    component="postal_code",
+                    code=ManualReviewReason.OUTSIDE_INITIAL_SCOPE.value,
+                    message=(
+                        "Current public-record connector priority is New "
+                        "Jersey first."
+                    ),
+                    severity="info",
+                    component="state_code",
                 )
             )
 
@@ -1126,71 +1667,110 @@ class AddressValidator:
 
 
 # ============================================================
-# SECTION 09 - CONFIDENCE SCORING
+# SECTION 12 - CONFIDENCE SCORER
 # ============================================================
 
 class AddressConfidenceScorer:
-    COMPONENT_WEIGHTS: Mapping[str, Decimal] = {
-        "house_number": Decimal("0.20"),
-        "street_name": Decimal("0.25"),
-        "street_suffix": Decimal("0.08"),
-        "city": Decimal("0.15"),
-        "state_code": Decimal("0.12"),
-        "postal_code": Decimal("0.15"),
-        "unit_number": Decimal("0.05"),
+    """
+    Score parsed address confidence.
+    """
+
+    COMPONENT_WEIGHTS = {
+        "house_number": 0.18,
+        "street_name": 0.22,
+        "street_suffix": 0.06,
+        "municipality": 0.16,
+        "county": 0.10,
+        "state_code": 0.10,
+        "postal_code": 0.12,
+        "block_lot": 0.16,
     }
 
     def score(
         self,
         components: AddressComponents,
         issues: Sequence[AddressIssue],
-        *,
-        provider_verified: bool = False,
-        geocoded: bool = False,
-        parcel_resolved: bool = False,
-    ) -> Decimal:
-        score = Decimal("0")
-        for component, weight in self.COMPONENT_WEIGHTS.items():
-            if getattr(components, component, None):
-                score += weight
+    ) -> float:
+        """
+        Score address confidence.
+        """
+
+        score = 0.0
+
+        if components.house_number:
+            score += self.COMPONENT_WEIGHTS["house_number"]
+
+        if components.street_name:
+            score += self.COMPONENT_WEIGHTS["street_name"]
+
+        if components.street_suffix:
+            score += self.COMPONENT_WEIGHTS["street_suffix"]
+
+        if components.municipality:
+            score += self.COMPONENT_WEIGHTS["municipality"]
+
+        if components.county:
+            score += self.COMPONENT_WEIGHTS["county"]
+
+        if components.state_code:
+            score += self.COMPONENT_WEIGHTS["state_code"]
+
+        if components.postal_code:
+            score += self.COMPONENT_WEIGHTS["postal_code"]
+
+        if components.block and components.lot:
+            score += self.COMPONENT_WEIGHTS["block_lot"]
+
+        if components.state_code == DEFAULT_STATE_CODE:
+            score += 0.04
+
+        if components.county == DEFAULT_COUNTY:
+            score += 0.04
+
+        if components.postal_code in MORRIS_COUNTY_ZIP_HINTS:
+            score += 0.04
 
         for issue in issues:
             if issue.severity == "error":
-                score -= Decimal("0.18")
+                score -= 0.20
             elif issue.severity == "warning":
-                score -= Decimal("0.04")
+                score -= 0.06
+            elif issue.severity == "info":
+                score -= 0.02
 
-        if provider_verified:
-            score += Decimal("0.10")
-        if geocoded:
-            score += Decimal("0.06")
-        if parcel_resolved:
-            score += Decimal("0.08")
-
-        return clamp_score(score.quantize(Decimal("0.000001")))
+        return round(clamp_confidence(score), 6)
 
     @staticmethod
-    def quality(score: Decimal, issues: Sequence[AddressIssue]) -> AddressQuality:
+    def quality(score: float, issues: Sequence[AddressIssue]) -> AddressQuality:
+        """
+        Convert score and issues into quality.
+        """
+
         if any(issue.severity == "error" for issue in issues):
             return AddressQuality.INVALID
-        if score >= Decimal("0.95"):
-            return AddressQuality.VERIFIED
-        if score >= Decimal("0.82"):
-            return AddressQuality.HIGH
-        if score >= Decimal("0.62"):
-            return AddressQuality.MEDIUM
-        if score > Decimal("0"):
-            return AddressQuality.LOW
-        return AddressQuality.UNKNOWN
+
+        return confidence_quality(score)
 
 
 # ============================================================
-# SECTION 10 - KEY AND FINGERPRINT GENERATION
+# SECTION 13 - KEY BUILDER
 # ============================================================
 
 class AddressKeyBuilder:
+    """
+    Build deterministic address keys.
+    """
+
     @staticmethod
-    def match_key(components: AddressComponents, *, include_unit: bool = True) -> str:
+    def match_key(
+        components: AddressComponents,
+        *,
+        include_unit: bool = True,
+    ) -> str:
+        """
+        Build unit-sensitive match key.
+        """
+
         values = [
             components.house_number,
             components.predirectional,
@@ -1199,55 +1779,276 @@ class AddressKeyBuilder:
             components.postdirectional,
             components.unit_type if include_unit else None,
             components.unit_number if include_unit else None,
-            components.city,
+            components.municipality,
             components.state_code,
             components.postal_code,
         ]
+
         return "|".join(normalize_identifier(value) or "" for value in values)
 
     @staticmethod
     def property_match_key(components: AddressComponents) -> str:
-        return AddressKeyBuilder.match_key(components, include_unit=False)
+        """
+        Build property-level match key without unit.
+        """
+
+        return AddressKeyBuilder.match_key(
+            components,
+            include_unit=False,
+        )
 
     @staticmethod
-    def parcel_key(components: AddressComponents) -> Optional[str]:
-        if not components.parcel_number:
+    def block_lot_key(components: AddressComponents) -> str | None:
+        """
+        Build block/lot key.
+        """
+
+        if not components.block or not components.lot:
             return None
+
         return "|".join(
             value
             for value in [
                 normalize_identifier(components.state_code),
                 normalize_identifier(components.county),
-                normalize_identifier(components.parcel_number),
+                normalize_identifier(components.municipality),
+                normalize_identifier(components.block),
+                normalize_identifier(components.lot),
+                normalize_identifier(components.qualifier),
             ]
             if value
         )
 
     @staticmethod
     def fingerprint(components: AddressComponents) -> str:
+        """
+        Build stable address fingerprint.
+        """
+
         return stable_hash(
             {
-                "property_match_key": AddressKeyBuilder.property_match_key(components),
-                "unit": normalize_identifier(components.unit_number),
-                "parcel": AddressKeyBuilder.parcel_key(components),
+                "input_type": components.input_type,
+                "property_match_key": AddressKeyBuilder.property_match_key(
+                    components
+                ),
+                "block_lot_key": AddressKeyBuilder.block_lot_key(components),
+                "unit_number": normalize_identifier(components.unit_number),
+                "owner_reference": normalize_identifier(
+                    components.owner_reference
+                ),
                 "country": normalize_identifier(components.country_code),
             }
         )
 
 
 # ============================================================
-# SECTION 11 - ADDRESS MATCHER
+# SECTION 14 - PUBLIC RECORD ROUTER
+# ============================================================
+
+class PublicRecordSearchPreparer:
+    """
+    Prepare address analysis for public-record lookup.
+    """
+
+    UNSUPPORTED_WITH_PUBLIC_RECORDS_ONLY = [
+        "active_listing_status",
+        "under_contract_status",
+        "pending_status",
+        "current_listing_price",
+        "current_days_on_market",
+        "showing_availability",
+        "broker_confirmation",
+        "current_mls_status",
+        "market_value_without_valuation_engine",
+    ]
+
+    def prepare(
+        self,
+        components: AddressComponents,
+        issues: Sequence[AddressIssue],
+    ) -> PublicRecordSearchPreparation:
+        """
+        Prepare public-record routing payload.
+        """
+
+        state_code = components.state_code or DEFAULT_STATE_CODE
+        county = components.county
+        municipality = components.municipality
+
+        if not county and state_code == "NJ":
+            county = self.infer_county(components)
+
+        morris_ready = (
+            state_code == "NJ"
+            and county == "Morris"
+            and (
+                components.has_street_signal()
+                or components.has_block_lot_signal()
+                or components.has_owner_signal()
+            )
+        )
+
+        nj_ready = (
+            state_code == "NJ"
+            and (
+                components.has_street_signal()
+                or components.has_block_lot_signal()
+                or components.has_owner_signal()
+            )
+        )
+
+        connector_targets: list[str] = []
+
+        if morris_ready:
+            connector_targets.extend(
+                [
+                    PublicRecordConnectorTarget.MORRIS_TAX_BOARD.value,
+                    PublicRecordConnectorTarget.MORRIS_CLERK.value,
+                    PublicRecordConnectorTarget.MORRIS_GIS.value,
+                ]
+            )
+
+        if nj_ready:
+            connector_targets.append(
+                PublicRecordConnectorTarget.NJ_STATE_MODIV.value
+            )
+
+        connector_targets = list(dict.fromkeys(connector_targets))
+
+        manual_review_required = any(
+            issue.manual_review_required
+            for issue in issues
+        )
+
+        unavailable_reasons: list[str] = []
+
+        if not nj_ready:
+            unavailable_reasons.append(
+                "New Jersey public-record routing is not ready for this input."
+            )
+
+        if state_code != "NJ":
+            unavailable_reasons.append(
+                "Initial connector set is optimized for New Jersey first."
+            )
+
+        if county and county != "Morris":
+            unavailable_reasons.append(
+                "County-specific connector set is currently Morris County first."
+            )
+
+        if not connector_targets:
+            manual_review_required = True
+
+        if components.has_block_lot_signal():
+            primary_query_mode = "block_lot"
+        elif components.has_street_signal():
+            primary_query_mode = "address"
+        elif components.has_owner_signal():
+            primary_query_mode = "owner_reference"
+        else:
+            primary_query_mode = "unknown"
+
+        if not connector_targets:
+            routing_status = PublicRecordRoutingStatus.MISSING_SEARCH_SIGNAL.value
+        elif manual_review_required:
+            routing_status = (
+                PublicRecordRoutingStatus.MANUAL_REVIEW_REQUIRED.value
+            )
+        elif morris_ready:
+            routing_status = PublicRecordRoutingStatus.READY.value
+        else:
+            routing_status = PublicRecordRoutingStatus.PARTIAL.value
+
+        return PublicRecordSearchPreparation(
+            routing_status=routing_status,
+            state_code=state_code,
+            county=county,
+            municipality=municipality,
+            jurisdiction_label=self.build_jurisdiction_label(
+                state_code=state_code,
+                county=county,
+                municipality=municipality,
+            ),
+            primary_query_mode=primary_query_mode,
+            connector_targets=connector_targets,
+            raw_query=components.raw_query or components.original,
+            street_address=components.street_line(include_unit=False) or None,
+            normalized_address=components.canonical_address(include_unit=True),
+            block=components.block,
+            lot=components.lot,
+            qualifier=components.qualifier,
+            owner_reference=components.owner_reference,
+            postal_code=components.postal_code,
+            morris_county_ready=morris_ready,
+            nj_state_ready=nj_ready,
+            manual_review_required=manual_review_required,
+            unavailable_reasons=unavailable_reasons,
+            unsupported_claims=list(self.UNSUPPORTED_WITH_PUBLIC_RECORDS_ONLY),
+            metadata={
+                "prepared_at": utc_now(),
+                "governance": ADDRESS_INTELLIGENCE_GOVERNANCE.copy(),
+            },
+        )
+
+    @staticmethod
+    def infer_county(components: AddressComponents) -> str | None:
+        """
+        Infer county from municipality or ZIP.
+        """
+
+        if components.county:
+            return components.county
+
+        if components.postal_code in MORRIS_COUNTY_ZIP_HINTS:
+            return "Morris"
+
+        normalized_municipality = normalize_text(components.municipality)
+
+        if normalized_municipality in MORRIS_COUNTY_MUNICIPALITIES:
+            return "Morris"
+
+        return None
+
+    @staticmethod
+    def build_jurisdiction_label(
+        *,
+        state_code: str | None,
+        county: str | None,
+        municipality: str | None,
+    ) -> str | None:
+        """
+        Build display jurisdiction label.
+        """
+
+        parts = [
+            municipality,
+            f"{county} County" if county else None,
+            state_code,
+        ]
+
+        label = ", ".join(part for part in parts if part)
+
+        return label or None
+
+
+# ============================================================
+# SECTION 15 - MATCHER
 # ============================================================
 
 class AddressMatcher:
-    WEIGHTS: Mapping[str, Decimal] = {
-        "house_number": Decimal("0.24"),
-        "street_name": Decimal("0.26"),
-        "street_suffix": Decimal("0.06"),
-        "city": Decimal("0.12"),
-        "state_code": Decimal("0.10"),
-        "postal_code": Decimal("0.14"),
-        "unit_number": Decimal("0.08"),
+    """
+    Compare two address analyses.
+    """
+
+    WEIGHTS = {
+        "house_number": 0.24,
+        "street_name": 0.26,
+        "street_suffix": 0.06,
+        "municipality": 0.14,
+        "state_code": 0.10,
+        "postal_code": 0.12,
+        "unit_number": 0.08,
     }
 
     def compare(
@@ -1255,42 +2056,44 @@ class AddressMatcher:
         left: AddressAnalysis,
         right: AddressAnalysis,
         *,
-        match_threshold: Decimal = Decimal("0.84"),
+        match_threshold: float = 0.84,
     ) -> AddressMatchResult:
+        """
+        Compare two analyses.
+        """
+
         left_components = left.components
         right_components = right.components
         reasons: list[str] = []
 
-        if (
-            left_components.parcel_number
-            and right_components.parcel_number
-            and normalize_identifier(left_components.parcel_number)
-            == normalize_identifier(right_components.parcel_number)
-        ):
+        left_block_lot = AddressKeyBuilder.block_lot_key(left_components)
+        right_block_lot = AddressKeyBuilder.block_lot_key(right_components)
+
+        if left_block_lot and right_block_lot and left_block_lot == right_block_lot:
             return AddressMatchResult(
-                level=MatchLevel.PARCEL,
-                score=Decimal("1"),
+                level=AddressMatchLevel.PARCEL.value,
+                score=1.0,
                 is_match=True,
-                component_scores={"parcel_number": Decimal("1")},
-                reasons=["Parcel numbers match exactly."],
+                component_scores={"block_lot": 1.0},
+                reasons=["Block/lot/municipality keys match."],
                 left=left,
                 right=right,
             )
 
         if left.fingerprint == right.fingerprint:
             return AddressMatchResult(
-                level=MatchLevel.EXACT,
-                score=Decimal("1"),
+                level=AddressMatchLevel.EXACT.value,
+                score=1.0,
                 is_match=True,
-                component_scores={"fingerprint": Decimal("1")},
-                reasons=["Canonical address fingerprints are identical."],
+                component_scores={"fingerprint": 1.0},
+                reasons=["Address fingerprints are identical."],
                 left=left,
                 right=right,
             )
 
-        component_scores: dict[str, Decimal] = {}
-        weighted_total = Decimal("0")
-        available_weight = Decimal("0")
+        component_scores: dict[str, float] = {}
+        weighted_total = 0.0
+        available_weight = 0.0
 
         for component, weight in self.WEIGHTS.items():
             left_value = getattr(left_components, component)
@@ -1299,37 +2102,23 @@ class AddressMatcher:
             if left_value is None and right_value is None:
                 continue
 
-            component_score = similarity(
-                str(left_value) if left_value is not None else None,
-                str(right_value) if right_value is not None else None,
-            )
+            component_score = similarity(left_value, right_value)
             component_scores[component] = component_score
             weighted_total += component_score * weight
             available_weight += weight
 
-        total_score = (
-            weighted_total / available_weight
-            if available_weight
-            else Decimal("0")
-        )
+        total_score = weighted_total / available_weight if available_weight else 0.0
 
         if left.property_match_key == right.property_match_key:
-            level = MatchLevel.CANONICAL
-            total_score = max(total_score, Decimal("0.96"))
+            level = AddressMatchLevel.CANONICAL.value
+            total_score = max(total_score, 0.96)
             reasons.append("Property-level canonical keys match.")
-        elif (
-            component_scores.get("house_number", Decimal("0")) == Decimal("1")
-            and component_scores.get("street_name", Decimal("0")) >= Decimal("0.90")
-            and component_scores.get("state_code", Decimal("0")) == Decimal("1")
-        ):
-            level = MatchLevel.STREET
-            reasons.append("House number, street name, and state strongly agree.")
         elif total_score >= match_threshold:
-            level = MatchLevel.FUZZY
-            reasons.append("Weighted component similarity exceeds the match threshold.")
+            level = AddressMatchLevel.FUZZY.value
+            reasons.append("Weighted component similarity exceeds threshold.")
         else:
-            level = MatchLevel.NONE
-            reasons.append("Address similarity is below the match threshold.")
+            level = AddressMatchLevel.NONE.value
+            reasons.append("Weighted component similarity is below threshold.")
 
         if (
             left_components.unit_number
@@ -1337,15 +2126,16 @@ class AddressMatcher:
             and normalize_identifier(left_components.unit_number)
             != normalize_identifier(right_components.unit_number)
         ):
-            total_score -= Decimal("0.12")
+            total_score -= 0.12
             reasons.append("Unit numbers conflict.")
 
-        total_score = clamp_score(total_score.quantize(Decimal("0.000001")))
+        total_score = round(clamp_confidence(total_score), 6)
 
         return AddressMatchResult(
             level=level,
             score=total_score,
-            is_match=total_score >= match_threshold and level != MatchLevel.NONE,
+            is_match=total_score >= match_threshold
+            and level != AddressMatchLevel.NONE.value,
             component_scores=component_scores,
             reasons=reasons,
             left=left,
@@ -1354,161 +2144,124 @@ class AddressMatcher:
 
 
 # ============================================================
-# SECTION 12 - GEOGRAPHIC UTILITIES
-# ============================================================
-
-class GeoMath:
-    EARTH_RADIUS_MILES = 3958.7613
-
-    @classmethod
-    def haversine_miles(
-        cls,
-        latitude_1: Decimal | float,
-        longitude_1: Decimal | float,
-        latitude_2: Decimal | float,
-        longitude_2: Decimal | float,
-    ) -> Decimal:
-        lat1 = math.radians(float(latitude_1))
-        lon1 = math.radians(float(longitude_1))
-        lat2 = math.radians(float(latitude_2))
-        lon2 = math.radians(float(longitude_2))
-
-        delta_lat = lat2 - lat1
-        delta_lon = lon2 - lon1
-
-        value = (
-            math.sin(delta_lat / 2) ** 2
-            + math.cos(lat1)
-            * math.cos(lat2)
-            * math.sin(delta_lon / 2) ** 2
-        )
-        distance = 2 * cls.EARTH_RADIUS_MILES * math.asin(math.sqrt(value))
-        return Decimal(str(round(distance, 6)))
-
-    @staticmethod
-    def bounding_box(
-        latitude: Decimal | float,
-        longitude: Decimal | float,
-        radius_miles: Decimal | float,
-    ) -> dict[str, Decimal]:
-        latitude = float(latitude)
-        longitude = float(longitude)
-        radius = float(radius_miles)
-
-        latitude_delta = radius / 69.0
-        longitude_scale = max(math.cos(math.radians(latitude)), 0.01)
-        longitude_delta = radius / (69.172 * longitude_scale)
-
-        return {
-            "minimum_latitude": Decimal(str(latitude - latitude_delta)),
-            "maximum_latitude": Decimal(str(latitude + latitude_delta)),
-            "minimum_longitude": Decimal(str(longitude - longitude_delta)),
-            "maximum_longitude": Decimal(str(longitude + longitude_delta)),
-        }
-
-
-# ============================================================
-# SECTION 13 - ADDRESS INTELLIGENCE ENGINE
+# SECTION 16 - ADDRESS INTELLIGENCE ENGINE
 # ============================================================
 
 class AddressIntelligenceEngine:
     """
-    High-level orchestration service.
-
-    Network-backed providers are optional. The deterministic parser,
-    normalization, validation, fingerprinting, and matching pipeline works
-    independently and can be used in tests, ingestion jobs, API routes, and
-    database services.
+    High-level deterministic address intelligence orchestration service.
     """
 
     def __init__(
         self,
         *,
-        parser: Optional[AddressParser] = None,
-        validator: Optional[AddressValidator] = None,
-        scorer: Optional[AddressConfidenceScorer] = None,
-        matcher: Optional[AddressMatcher] = None,
-        validation_providers: Optional[Sequence[AddressValidationProvider]] = None,
-        geocoding_providers: Optional[Sequence[GeocodingProvider]] = None,
-        parcel_providers: Optional[Sequence[ParcelLookupProvider]] = None,
+        parser: AddressParser | None = None,
+        validator: AddressValidator | None = None,
+        scorer: AddressConfidenceScorer | None = None,
+        public_record_preparer: PublicRecordSearchPreparer | None = None,
+        matcher: AddressMatcher | None = None,
     ) -> None:
         self.parser = parser or AddressParser()
         self.validator = validator or AddressValidator()
         self.scorer = scorer or AddressConfidenceScorer()
+        self.public_record_preparer = (
+            public_record_preparer or PublicRecordSearchPreparer()
+        )
         self.matcher = matcher or AddressMatcher()
-        self.validation_providers = list(validation_providers or [])
-        self.geocoding_providers = list(geocoding_providers or [])
-        self.parcel_providers = list(parcel_providers or [])
 
     def analyze(
         self,
         raw_address: str,
         *,
-        city: Optional[str] = None,
-        state_code: Optional[str] = None,
-        postal_code: Optional[str] = None,
-        county: Optional[str] = None,
+        municipality: str | None = None,
+        city: str | None = None,
+        county: str | None = None,
+        state_code: str | None = None,
+        postal_code: str | None = None,
+        owner_reference: str | None = None,
         country_code: str = DEFAULT_COUNTRY_CODE,
-        enrich: bool = False,
     ) -> AddressAnalysis:
-        components = self.parser.parse(
-            raw_address,
-            city=city,
+        """
+        Analyze address and prepare public-record search.
+        """
+
+        request_id = self.make_request_id(
+            raw_address=raw_address,
+            municipality=municipality or city,
+            county=county,
             state_code=state_code,
             postal_code=postal_code,
+            owner_reference=owner_reference,
+        )
+
+        components = self.parser.parse(
+            raw_address,
+            municipality=municipality or city,
             county=county,
+            state_code=state_code,
+            postal_code=postal_code,
+            owner_reference=owner_reference,
             country_code=country_code,
         )
-        transformations = self._build_transformations(raw_address, components)
-        provider_payload: dict[str, Any] = {}
 
-        provider_verified = False
-        geocoded = False
-        parcel_resolved = False
-
-        if enrich:
-            provider_verified = self._run_validation_providers(
-                components,
-                provider_payload,
-            )
-            geocoded = self._run_geocoding_providers(
-                components,
-                provider_payload,
-            )
-            parcel_resolved = self._run_parcel_providers(
-                components,
-                provider_payload,
-            )
-
+        transformations = self.build_transformations(raw_address, components)
         issues = self.validator.validate(components)
-        confidence = self.scorer.score(
-            components,
-            issues,
-            provider_verified=provider_verified,
-            geocoded=geocoded,
-            parcel_resolved=parcel_resolved,
-        )
+        confidence = self.scorer.score(components, issues)
         quality = self.scorer.quality(confidence, issues)
 
-        canonical_address = components.canonical(include_unit=True)
+        public_record_search = self.public_record_preparer.prepare(
+            components,
+            issues,
+        )
+
+        manual_review_required = (
+            public_record_search.manual_review_required
+            or any(issue.manual_review_required for issue in issues)
+            or confidence < 0.62
+        )
+
+        if confidence < 0.62:
+            issues.append(
+                AddressIssue(
+                    code=ManualReviewReason.LOW_CONFIDENCE.value,
+                    message="Address confidence is below production-ready threshold.",
+                    severity="warning",
+                    component="confidence",
+                    manual_review_required=True,
+                )
+            )
+
+        canonical_address = components.canonical_address(include_unit=True)
         normalized_street_address = components.street_line(include_unit=True)
-        match_key = AddressKeyBuilder.match_key(components, include_unit=True)
+        match_key = AddressKeyBuilder.match_key(
+            components,
+            include_unit=True,
+        )
         property_match_key = AddressKeyBuilder.property_match_key(components)
         fingerprint = AddressKeyBuilder.fingerprint(components)
 
         return AddressAnalysis(
+            request_id=request_id,
             components=components,
-            quality=quality,
+            quality=quality.value,
             confidence=confidence,
             canonical_address=canonical_address,
             normalized_street_address=normalized_street_address,
             match_key=match_key,
             property_match_key=property_match_key,
             fingerprint=fingerprint,
+            public_record_search=public_record_search,
             issues=issues,
             transformations=transformations,
-            component_status=self._component_status(components),
-            provider_payload=provider_payload,
+            component_status=self.component_status(components),
+            manual_review_required=manual_review_required,
+            metadata={
+                "engine": ADDRESS_INTELLIGENCE_ENGINE_NAME,
+                "version": ADDRESS_INTELLIGENCE_ENGINE_VERSION,
+                "phase": ADDRESS_INTELLIGENCE_ENGINE_PHASE,
+                "analyzed_at": utc_now(),
+                "governance": ADDRESS_INTELLIGENCE_GOVERNANCE.copy(),
+            },
         )
 
     def compare(
@@ -1516,18 +2269,24 @@ class AddressIntelligenceEngine:
         left_address: str | AddressAnalysis,
         right_address: str | AddressAnalysis,
         *,
-        match_threshold: Decimal = Decimal("0.84"),
+        match_threshold: float = 0.84,
     ) -> AddressMatchResult:
+        """
+        Compare two addresses.
+        """
+
         left = (
             left_address
             if isinstance(left_address, AddressAnalysis)
             else self.analyze(left_address)
         )
+
         right = (
             right_address
             if isinstance(right_address, AddressAnalysis)
             else self.analyze(right_address)
         )
+
         return self.matcher.compare(
             left,
             right,
@@ -1538,8 +2297,12 @@ class AddressIntelligenceEngine:
         self,
         addresses: Iterable[str],
         *,
-        match_threshold: Decimal = Decimal("0.90"),
+        match_threshold: float = 0.90,
     ) -> list[list[AddressAnalysis]]:
+        """
+        Deduplicate address list.
+        """
+
         groups: list[list[AddressAnalysis]] = []
 
         for raw_address in addresses:
@@ -1552,6 +2315,7 @@ class AddressIntelligenceEngine:
                     candidate,
                     match_threshold=match_threshold,
                 )
+
                 if comparison.is_match:
                     group.append(candidate)
                     placed = True
@@ -1562,143 +2326,111 @@ class AddressIntelligenceEngine:
 
         return groups
 
-    def _run_validation_providers(
+    def to_property_intelligence_request_payload(
         self,
-        components: AddressComponents,
-        payload: dict[str, Any],
-    ) -> bool:
-        verified = False
-        for provider in self.validation_providers:
-            try:
-                result = dict(provider.validate(components))
-                payload[f"validation:{provider.name}"] = result
-                if result.get("verified") is True:
-                    verified = True
-                self._merge_provider_components(components, result)
-            except Exception as exc:
-                payload[f"validation:{provider.name}"] = {
-                    "error": str(exc),
-                    "provider": provider.name,
-                }
-        return verified
+        analysis: AddressAnalysis,
+    ) -> dict[str, Any]:
+        """
+        Convert address analysis to property-intelligence request payload.
+        """
 
-    def _run_geocoding_providers(
-        self,
-        components: AddressComponents,
-        payload: dict[str, Any],
-    ) -> bool:
-        for provider in self.geocoding_providers:
-            try:
-                result = provider.geocode(components)
-                if result is None:
-                    continue
+        components = analysis.components
+        public_records = analysis.public_record_search
 
-                components.latitude = result.latitude
-                components.longitude = result.longitude
-                components.parcel_number = (
-                    components.parcel_number or result.parcel_number
-                )
-                components.county = components.county or normalize_text(result.county)
-
-                payload[f"geocode:{provider.name}"] = {
-                    "latitude": str(result.latitude),
-                    "longitude": str(result.longitude),
-                    "precision": result.precision.value,
-                    "confidence": str(result.confidence),
-                    "formatted_address": result.formatted_address,
-                    "parcel_number": result.parcel_number,
-                    "county": result.county,
-                    "raw_payload": result.raw_payload,
-                }
-                return True
-            except Exception as exc:
-                payload[f"geocode:{provider.name}"] = {
-                    "error": str(exc),
-                    "provider": provider.name,
-                }
-        return False
-
-    def _run_parcel_providers(
-        self,
-        components: AddressComponents,
-        payload: dict[str, Any],
-    ) -> bool:
-        for provider in self.parcel_providers:
-            try:
-                result = dict(provider.lookup_parcel(components))
-                payload[f"parcel:{provider.name}"] = result
-
-                parcel_number = result.get("parcel_number")
-                if parcel_number:
-                    components.parcel_number = normalize_text(str(parcel_number))
-                    if result.get("county") and not components.county:
-                        components.county = normalize_text(str(result["county"]))
-                    return True
-            except Exception as exc:
-                payload[f"parcel:{provider.name}"] = {
-                    "error": str(exc),
-                    "provider": provider.name,
-                }
-        return False
-
-    @staticmethod
-    def _merge_provider_components(
-        components: AddressComponents,
-        result: Mapping[str, Any],
-    ) -> None:
-        field_map = {
-            "house_number": "house_number",
-            "predirectional": "predirectional",
-            "street_name": "street_name",
-            "street_suffix": "street_suffix",
-            "postdirectional": "postdirectional",
-            "unit_type": "unit_type",
-            "unit_number": "unit_number",
-            "city": "city",
-            "county": "county",
-            "state_code": "state_code",
-            "postal_code": "postal_code",
-            "postal_code_plus4": "postal_code_plus4",
+        return {
+            "request_id": analysis.request_id,
+            "raw_query": components.raw_query or components.original,
+            "street_address": components.street_line(include_unit=False) or None,
+            "municipality": components.municipality,
+            "county": components.county,
+            "state": components.state_code,
+            "postal_code": components.postal_code,
+            "block": components.block,
+            "lot": components.lot,
+            "qualifier": components.qualifier,
+            "parcel_id": components.parcel_id,
+            "owner_reference": components.owner_reference,
+            "include_public_records": True,
+            "include_listing": True,
+            "include_valuation": True,
+            "include_comparables": True,
+            "include_location_context": True,
+            "include_ai_summary": True,
+            "strict_source_mode": True,
+            "allow_manual_review_results": True,
+            "requested_domains": [
+                "address",
+                "parcel",
+                "public_records",
+                "tax_assessment",
+                "sale_history",
+                "owner_reference",
+                "building_facts",
+                "gis_context",
+                "modiv_context",
+                "valuation",
+            ],
+            "metadata": {
+                "address_intelligence": analysis.to_dict(),
+                "public_record_search": public_records.to_dict(),
+            },
         }
-        for source_key, target_key in field_map.items():
-            value = result.get(source_key)
-            if value not in (None, ""):
-                setattr(components, target_key, normalize_text(str(value)))
-
-        components.state_code = normalize_state(components.state_code)
-        components.street_suffix = normalize_suffix(components.street_suffix)
-        components.predirectional = normalize_directional(components.predirectional)
-        components.postdirectional = normalize_directional(components.postdirectional)
-        components.unit_type = normalize_unit_type(components.unit_type)
 
     @staticmethod
-    def _build_transformations(
+    def make_request_id(**components: Any) -> str:
+        """
+        Build deterministic address request ID.
+        """
+
+        return f"address-request-{stable_hash(components)[:18]}"
+
+    @staticmethod
+    def build_transformations(
         original: str,
         components: AddressComponents,
     ) -> list[str]:
+        """
+        Build transformation labels.
+        """
+
         transformations: list[str] = []
+
         normalized_original = normalize_text(original) or ""
 
         if normalized_original != original:
             transformations.append("normalized_case_whitespace_and_punctuation")
+
         if components.street_suffix:
             transformations.append("standardized_street_suffix")
+
         if components.predirectional or components.postdirectional:
             transformations.append("standardized_directional")
+
         if components.unit_number:
             transformations.append("standardized_unit_designator")
+
         if components.state_code:
             transformations.append("standardized_state_code")
+
         if components.postal_code:
             transformations.append("standardized_postal_code")
 
-        return transformations
+        if components.county == "Morris":
+            transformations.append("inferred_or_detected_morris_county")
+
+        if components.block and components.lot:
+            transformations.append("detected_block_lot_search_signal")
+
+        return list(dict.fromkeys(transformations))
 
     @staticmethod
-    def _component_status(
+    def component_status(
         components: AddressComponents,
-    ) -> dict[str, ComponentStatus]:
-        result: dict[str, ComponentStatus] = {}
+    ) -> dict[str, str]:
+        """
+        Build component status map.
+        """
+
         fields = [
             "house_number",
             "predirectional",
@@ -1707,126 +2439,47 @@ class AddressIntelligenceEngine:
             "postdirectional",
             "unit_type",
             "unit_number",
-            "city",
+            "municipality",
             "county",
             "state_code",
             "postal_code",
             "postal_code_plus4",
+            "block",
+            "lot",
+            "qualifier",
+            "owner_reference",
             "latitude",
             "longitude",
-            "parcel_number",
+            "parcel_id",
         ]
+
+        result: dict[str, str] = {}
+
         for field_name in fields:
             value = getattr(components, field_name)
+
             result[field_name] = (
-                ComponentStatus.PRESENT
+                AddressComponentStatus.PRESENT.value
                 if value not in (None, "")
-                else ComponentStatus.MISSING
+                else AddressComponentStatus.MISSING.value
             )
+
         return result
 
 
 # ============================================================
-# SECTION 14 - MODEL INTEGRATION HELPERS
+# SECTION 17 - BATCH PROCESSOR
 # ============================================================
-
-def apply_analysis_to_profile(
-    profile: Any,
-    analysis: AddressAnalysis,
-    *,
-    overwrite_existing: bool = False,
-) -> Any:
-    """
-    Apply normalized address fields to a PropertyIntelligenceProfile-like object.
-
-    The helper uses duck typing so this module does not create an import cycle
-    with app.property_intelligence.models.
-    """
-
-    components = analysis.components
-    assignments = {
-        "canonical_address": analysis.canonical_address,
-        "address_line_1": components.street_line(include_unit=False),
-        "address_line_2": (
-            f"{components.unit_type or 'UNIT'} {components.unit_number}"
-            if components.unit_number
-            else None
-        ),
-        "city": components.city,
-        "county": components.county,
-        "state_code": components.state_code,
-        "postal_code": components.postal_code,
-        "country_code": components.country_code,
-        "latitude": components.latitude,
-        "longitude": components.longitude,
-        "parcel_number": components.parcel_number,
-    }
-
-    for attribute, value in assignments.items():
-        if not hasattr(profile, attribute):
-            continue
-        current = getattr(profile, attribute)
-        if overwrite_existing or current in (None, ""):
-            setattr(profile, attribute, value)
-
-    metadata = getattr(profile, "metadata_json", None)
-    if isinstance(metadata, dict):
-        metadata["address_intelligence"] = {
-            "quality": analysis.quality.value,
-            "confidence": str(analysis.confidence),
-            "match_key": analysis.match_key,
-            "property_match_key": analysis.property_match_key,
-            "fingerprint": analysis.fingerprint,
-            "issues": [asdict(issue) for issue in analysis.issues],
-            "transformations": analysis.transformations,
-        }
-
-    return profile
-
-
-def analysis_to_observation_payload(
-    analysis: AddressAnalysis,
-) -> dict[str, Any]:
-    """Create a normalized payload suitable for a PropertyObservation record."""
-    return {
-        "field_path": "property.address",
-        "value_type": "json",
-        "value_json": analysis.to_dict(),
-        "quality_status": analysis.quality.value,
-        "confidence_score": str(analysis.confidence),
-        "source_payload_hash": analysis.fingerprint,
-    }
-
-
-# ============================================================
-# SECTION 15 - BATCH OPERATIONS
-# ============================================================
-
-@dataclass(slots=True)
-class BatchAddressResult:
-    total: int
-    valid: int
-    invalid: int
-    duplicate_groups: int
-    analyses: list[AddressAnalysis]
-    groups: list[list[AddressAnalysis]]
-
-    def to_dict(self) -> dict[str, Any]:
-        return {
-            "total": self.total,
-            "valid": self.valid,
-            "invalid": self.invalid,
-            "duplicate_groups": self.duplicate_groups,
-            "analyses": [analysis.to_dict() for analysis in self.analyses],
-            "groups": [
-                [analysis.to_dict() for analysis in group]
-                for group in self.groups
-            ],
-        }
-
 
 class BatchAddressProcessor:
-    def __init__(self, engine: Optional[AddressIntelligenceEngine] = None) -> None:
+    """
+    Process multiple addresses.
+    """
+
+    def __init__(
+        self,
+        engine: AddressIntelligenceEngine | None = None,
+    ) -> None:
         self.engine = engine or AddressIntelligenceEngine()
 
     def process(
@@ -1834,17 +2487,27 @@ class BatchAddressProcessor:
         addresses: Iterable[str],
         *,
         deduplicate: bool = True,
-        match_threshold: Decimal = Decimal("0.90"),
+        match_threshold: float = 0.90,
     ) -> BatchAddressResult:
-        analyses = [self.engine.analyze(address) for address in addresses]
-        groups = (
-            self.engine.deduplicate(
-                [analysis.components.original for analysis in analyses],
+        """
+        Process address batch.
+        """
+
+        analyses = [
+            self.engine.analyze(address)
+            for address in addresses
+        ]
+
+        if deduplicate:
+            groups = self.engine.deduplicate(
+                [
+                    analysis.components.original
+                    for analysis in analyses
+                ],
                 match_threshold=match_threshold,
             )
-            if deduplicate
-            else [[analysis] for analysis in analyses]
-        )
+        else:
+            groups = [[analysis] for analysis in analyses]
 
         valid_count = sum(1 for analysis in analyses if analysis.is_valid)
         duplicate_groups = sum(1 for group in groups if len(group) > 1)
@@ -1860,7 +2523,150 @@ class BatchAddressProcessor:
 
 
 # ============================================================
-# SECTION 16 - DEFAULT SINGLETON AND CONVENIENCE API
+# SECTION 18 - PROFILE AND PUBLIC RECORD BRIDGE HELPERS
+# ============================================================
+
+def analysis_to_public_record_search_payload(
+    analysis: AddressAnalysis,
+) -> dict[str, Any]:
+    """
+    Convert analysis into public records engine payload.
+    """
+
+    search = analysis.public_record_search
+
+    return {
+        "raw_query": search.raw_query,
+        "street_address": search.street_address,
+        "municipality": search.municipality,
+        "county": search.county,
+        "state": search.state_code,
+        "postal_code": search.postal_code,
+        "block": search.block,
+        "lot": search.lot,
+        "qualifier": search.qualifier,
+        "owner_reference": search.owner_reference,
+        "metadata": {
+            "source": "address_intelligence",
+            "address_request_id": analysis.request_id,
+            "address_fingerprint": analysis.fingerprint,
+            "routing_status": search.routing_status,
+            "connector_targets": search.connector_targets,
+            "manual_review_required": search.manual_review_required,
+        },
+    }
+
+
+def analysis_to_property_identity_payload(
+    analysis: AddressAnalysis,
+) -> dict[str, Any]:
+    """
+    Convert analysis into property identity payload.
+    """
+
+    components = analysis.components
+
+    return {
+        "raw_address": components.original,
+        "street_address": components.street_line(include_unit=False) or None,
+        "unit": (
+            f"{components.unit_type or 'UNIT'} {components.unit_number}"
+            if components.unit_number
+            else None
+        ),
+        "municipality": components.municipality,
+        "county": components.county,
+        "state": components.state_code,
+        "postal_code": components.postal_code,
+        "normalized_address": analysis.canonical_address,
+        "latitude": components.latitude,
+        "longitude": components.longitude,
+        "confidence": analysis.confidence,
+        "match_quality": analysis.quality,
+        "metadata": {
+            "fingerprint": analysis.fingerprint,
+            "match_key": analysis.match_key,
+            "property_match_key": analysis.property_match_key,
+            "public_record_search": analysis.public_record_search.to_dict(),
+        },
+    }
+
+
+def analysis_to_observation_payload(
+    analysis: AddressAnalysis,
+) -> dict[str, Any]:
+    """
+    Create normalized observation payload for future persistence.
+    """
+
+    return {
+        "field_path": "property.address",
+        "value_type": "json",
+        "value_json": analysis.to_dict(),
+        "quality_status": analysis.quality,
+        "confidence_score": analysis.confidence,
+        "source_payload_hash": analysis.fingerprint,
+    }
+
+
+def apply_analysis_to_profile(
+    profile: Any,
+    analysis: AddressAnalysis,
+    *,
+    overwrite_existing: bool = False,
+) -> Any:
+    """
+    Apply normalized address fields to a profile-like object.
+
+    Duck typing avoids import cycles with property_intelligence.models.
+    """
+
+    components = analysis.components
+
+    assignments = {
+        "canonical_address": analysis.canonical_address,
+        "address_line_1": components.street_line(include_unit=False),
+        "address_line_2": (
+            f"{components.unit_type or 'UNIT'} {components.unit_number}"
+            if components.unit_number
+            else None
+        ),
+        "city": components.municipality,
+        "municipality": components.municipality,
+        "county": components.county,
+        "state_code": components.state_code,
+        "postal_code": components.postal_code,
+        "country_code": components.country_code,
+        "latitude": components.latitude,
+        "longitude": components.longitude,
+        "block": components.block,
+        "lot": components.lot,
+        "qualifier": components.qualifier,
+    }
+
+    for attribute, value in assignments.items():
+        if not hasattr(profile, attribute):
+            continue
+
+        current = getattr(profile, attribute)
+
+        if overwrite_existing or current in (None, ""):
+            setattr(profile, attribute, value)
+
+    metadata = getattr(profile, "metadata", None) or getattr(
+        profile,
+        "metadata_json",
+        None,
+    )
+
+    if isinstance(metadata, dict):
+        metadata["address_intelligence"] = analysis.to_dict()
+
+    return profile
+
+
+# ============================================================
+# SECTION 19 - DEFAULT SINGLETON AND CONVENIENCE API
 # ============================================================
 
 _default_engine = AddressIntelligenceEngine()
@@ -1869,25 +2675,35 @@ _default_engine = AddressIntelligenceEngine()
 def analyze_address(
     raw_address: str,
     *,
-    city: Optional[str] = None,
-    state_code: Optional[str] = None,
-    postal_code: Optional[str] = None,
-    county: Optional[str] = None,
+    municipality: str | None = None,
+    city: str | None = None,
+    county: str | None = None,
+    state_code: str | None = None,
+    postal_code: str | None = None,
+    owner_reference: str | None = None,
     country_code: str = DEFAULT_COUNTRY_CODE,
-    enrich: bool = False,
 ) -> AddressAnalysis:
+    """
+    Analyze address using default engine.
+    """
+
     return _default_engine.analyze(
         raw_address,
+        municipality=municipality,
         city=city,
+        county=county,
         state_code=state_code,
         postal_code=postal_code,
-        county=county,
+        owner_reference=owner_reference,
         country_code=country_code,
-        enrich=enrich,
     )
 
 
 def normalize_address(raw_address: str, **kwargs: Any) -> str:
+    """
+    Return canonical normalized address.
+    """
+
     return analyze_address(raw_address, **kwargs).canonical_address
 
 
@@ -1895,8 +2711,12 @@ def compare_addresses(
     left_address: str | AddressAnalysis,
     right_address: str | AddressAnalysis,
     *,
-    match_threshold: Decimal = Decimal("0.84"),
+    match_threshold: float = 0.84,
 ) -> AddressMatchResult:
+    """
+    Compare addresses using default engine.
+    """
+
     return _default_engine.compare(
         left_address,
         right_address,
@@ -1905,40 +2725,237 @@ def compare_addresses(
 
 
 def address_fingerprint(raw_address: str, **kwargs: Any) -> str:
+    """
+    Return deterministic address fingerprint.
+    """
+
     return analyze_address(raw_address, **kwargs).fingerprint
 
 
+def prepare_public_record_search(
+    raw_address: str,
+    **kwargs: Any,
+) -> PublicRecordSearchPreparation:
+    """
+    Analyze address and return public-record search preparation.
+    """
+
+    return analyze_address(raw_address, **kwargs).public_record_search
+
+
+def make_property_intelligence_request_payload(
+    raw_address: str,
+    **kwargs: Any,
+) -> dict[str, Any]:
+    """
+    Analyze address and return property-intelligence request payload.
+    """
+
+    analysis = analyze_address(raw_address, **kwargs)
+
+    return _default_engine.to_property_intelligence_request_payload(analysis)
+
+
 # ============================================================
-# SECTION 17 - PUBLIC EXPORTS
+# SECTION 20 - MODULE HEALTH AND DIAGNOSTICS
+# ============================================================
+
+def get_address_intelligence_metadata() -> dict[str, Any]:
+    """
+    Return module metadata.
+    """
+
+    return {
+        "name": ADDRESS_INTELLIGENCE_ENGINE_NAME,
+        "version": ADDRESS_INTELLIGENCE_ENGINE_VERSION,
+        "phase": ADDRESS_INTELLIGENCE_ENGINE_PHASE,
+        "status": ADDRESS_INTELLIGENCE_ENGINE_STATUS,
+        "release_channel": ADDRESS_INTELLIGENCE_RELEASE_CHANNEL,
+        "generated_at": utc_now(),
+    }
+
+
+def validate_address_intelligence_governance() -> dict[str, Any]:
+    """
+    Validate no-fabrication address governance.
+    """
+
+    issues: list[dict[str, Any]] = []
+
+    false_keys = [
+        "mock_property_facts_allowed",
+        "fabricated_property_values_allowed",
+        "fabricated_listing_status_allowed",
+        "fabricated_owner_conclusions_allowed",
+        "fabricated_sale_history_allowed",
+        "address_intelligence_can_estimate_value",
+        "address_intelligence_can_claim_listing_status",
+        "address_intelligence_can_claim_public_records",
+    ]
+
+    for key in false_keys:
+        if ADDRESS_INTELLIGENCE_GOVERNANCE.get(key):
+            issues.append(
+                {
+                    "issue_code": f"{key}_must_remain_false",
+                    "severity": "critical",
+                    "message": f"{key} must remain False.",
+                }
+            )
+
+    true_keys = [
+        "address_intelligence_can_prepare_public_record_search",
+        "manual_review_for_ambiguous_input",
+        "manual_review_for_missing_search_signal",
+        "source_attribution_required_downstream",
+    ]
+
+    for key in true_keys:
+        if not ADDRESS_INTELLIGENCE_GOVERNANCE.get(key):
+            issues.append(
+                {
+                    "issue_code": f"{key}_must_remain_true",
+                    "severity": "critical",
+                    "message": f"{key} must remain True.",
+                }
+            )
+
+    return {
+        "valid": not issues,
+        "issue_count": len(issues),
+        "issues": issues,
+        "checked_at": utc_now(),
+    }
+
+
+def get_address_intelligence_health() -> dict[str, Any]:
+    """
+    Return engine health.
+    """
+
+    governance = validate_address_intelligence_governance()
+
+    sample = analyze_address(
+        "43 Wetmore Ave, Morristown, NJ 07960"
+    )
+
+    return {
+        "name": ADDRESS_INTELLIGENCE_ENGINE_NAME,
+        "version": ADDRESS_INTELLIGENCE_ENGINE_VERSION,
+        "phase": ADDRESS_INTELLIGENCE_ENGINE_PHASE,
+        "status": ADDRESS_INTELLIGENCE_ENGINE_STATUS,
+        "governance_valid": governance["valid"],
+        "governance_issue_count": governance["issue_count"],
+        "sample_address_quality": sample.quality,
+        "sample_address_confidence": sample.confidence,
+        "sample_public_record_routing_status": (
+            sample.public_record_search.routing_status
+        ),
+        "sample_connector_targets": (
+            sample.public_record_search.connector_targets
+        ),
+        "network_required": False,
+        "mock_property_facts_allowed": False,
+        "fabricated_listing_status_allowed": False,
+        "fabricated_property_values_allowed": False,
+        "generated_at": utc_now(),
+    }
+
+
+def get_address_intelligence_diagnostics() -> dict[str, Any]:
+    """
+    Return full diagnostics.
+    """
+
+    return {
+        "metadata": get_address_intelligence_metadata(),
+        "health": get_address_intelligence_health(),
+        "governance": ADDRESS_INTELLIGENCE_GOVERNANCE.copy(),
+        "governance_validation": validate_address_intelligence_governance(),
+        "morris_county_municipality_count": len(MORRIS_COUNTY_MUNICIPALITIES),
+        "morris_county_zip_hint_count": len(MORRIS_COUNTY_ZIP_HINTS),
+        "connector_targets": [
+            target.value
+            for target in PublicRecordConnectorTarget
+        ],
+        "unsupported_public_record_claims": (
+            PublicRecordSearchPreparer.UNSUPPORTED_WITH_PUBLIC_RECORDS_ONLY
+        ),
+        "generated_at": utc_now(),
+    }
+
+
+# ============================================================
+# SECTION 21 - PUBLIC EXPORTS
 # ============================================================
 
 __all__ = [
-    "AddressType",
+    "ADDRESS_INTELLIGENCE_ENGINE_NAME",
+    "ADDRESS_INTELLIGENCE_ENGINE_VERSION",
+    "ADDRESS_INTELLIGENCE_ENGINE_PHASE",
+    "ADDRESS_INTELLIGENCE_ENGINE_STATUS",
+    "ADDRESS_INTELLIGENCE_RELEASE_CHANNEL",
+    "ADDRESS_INTELLIGENCE_GOVERNANCE",
+    "DEFAULT_COUNTRY_CODE",
+    "DEFAULT_STATE_CODE",
+    "DEFAULT_COUNTY",
+    "MORRIS_COUNTY_MUNICIPALITIES",
+    "MORRIS_COUNTY_ZIP_HINTS",
+    "AddressInputType",
     "AddressQuality",
-    "MatchLevel",
-    "ComponentStatus",
-    "GeocodePrecision",
-    "AddressComponents",
+    "AddressMatchLevel",
+    "AddressComponentStatus",
+    "PublicRecordRoutingStatus",
+    "PublicRecordConnectorTarget",
+    "ManualReviewReason",
     "AddressIssue",
+    "AddressComponents",
+    "PublicRecordSearchPreparation",
     "AddressAnalysis",
     "AddressMatchResult",
-    "GeocodeResult",
-    "AddressValidationProvider",
-    "GeocodingProvider",
-    "ParcelLookupProvider",
+    "BatchAddressResult",
+    "utc_now",
+    "safe_string",
+    "normalize_text",
+    "normalize_display_text",
+    "normalize_identifier",
+    "normalize_state",
+    "normalize_county",
+    "normalize_municipality",
+    "normalize_postal_code",
+    "normalize_suffix",
+    "normalize_directional",
+    "normalize_unit_type",
+    "normalize_block_lot_value",
+    "stable_hash",
+    "clamp_confidence",
+    "confidence_quality",
+    "similarity",
     "AddressParser",
     "AddressValidator",
     "AddressConfidenceScorer",
     "AddressKeyBuilder",
+    "PublicRecordSearchPreparer",
     "AddressMatcher",
-    "GeoMath",
     "AddressIntelligenceEngine",
-    "BatchAddressResult",
     "BatchAddressProcessor",
-    "apply_analysis_to_profile",
+    "analysis_to_public_record_search_payload",
+    "analysis_to_property_identity_payload",
     "analysis_to_observation_payload",
+    "apply_analysis_to_profile",
     "analyze_address",
     "normalize_address",
     "compare_addresses",
     "address_fingerprint",
+    "prepare_public_record_search",
+    "make_property_intelligence_request_payload",
+    "get_address_intelligence_metadata",
+    "validate_address_intelligence_governance",
+    "get_address_intelligence_health",
+    "get_address_intelligence_diagnostics",
 ]
+
+
+# ============================================================
+# END OF FILE
+# ============================================================
