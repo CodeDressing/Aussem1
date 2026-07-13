@@ -1,28 +1,37 @@
 # ============================================================
 # AUSSEM1
-# PHASE 2.20 PART 5.00
-# ENTERPRISE NJ MORRIS COUNTY TAX BOARD CONNECTOR
+# PHASE 2.47 PART 1.00
+# ENTERPRISE MORRIS COUNTY TAX BOARD CONNECTOR
 # FILE: app/public_records/connectors/nj_morris_tax_board_connector.py
 # PURPOSE:
-# Provide the official-source connector scaffold for Morris County,
-# New Jersey tax-board public-record property lookups.
+# Strengthen Morris County tax-board style public-record extraction
+# for source-governed property intelligence workflows.
 #
-# This connector is designed to support:
-# - parcel identity
-# - address identity
-# - tax assessment references
-# - property tax context where source-supported
-# - owner references where source-supported
-# - sale-history references where source-supported
-# - public-record source attribution
-# - explicit unavailable/manual-review states
+# THIS CONNECTOR FOCUSES ON:
+# - tax year
+# - block
+# - lot
+# - qualifier
+# - municipality
+# - property class
+# - land assessment
+# - improvement assessment
+# - total assessment
+# - owner reference if source-backed
+# - sale reference if source-backed
+# - source attribution
+# - manual-review flags
 #
-# This file does not create mock property records.
-# This file does not fabricate tax data.
-# This file does not fabricate sale history.
-# This file does not fabricate owner conclusions.
-# This file does not claim MLS active status.
-# This file does not claim under-contract status.
+# CORE GOVERNANCE:
+# - No fabricated tax records.
+# - No fabricated owner facts.
+# - No fabricated sale history.
+# - No fabricated assessment values.
+# - No live scraping unless a future approved source client is connected.
+# - Assessment is not market value.
+# - Assessment is not listing price.
+# - Assessment is not an appraisal.
+# - Missing source-backed fields remain unavailable.
 #
 # AUTHOR:
 # Ryan Schuren
@@ -31,1845 +40,1707 @@
 # Alfred
 #
 # STATUS:
-# REAL PUBLIC RECORD CONNECTOR FOUNDATION ACTIVE
+# ENTERPRISE MORRIS COUNTY TAX BOARD CONNECTOR ACTIVE
 # ============================================================
 
-
-# ============================================================
-# SECTION 01 - ENTERPRISE IMPORTS
-# ============================================================
 
 from __future__ import annotations
 
+# ============================================================
+# SECTION 01 - STANDARD LIBRARY IMPORTS
+# ============================================================
+
+import hashlib
+import json
+import math
 import re
+import traceback
+from dataclasses import asdict
 from dataclasses import dataclass
 from dataclasses import field
+from datetime import UTC
+from datetime import date
+from datetime import datetime
+from enum import StrEnum
 from typing import Any
-from urllib.parse import quote_plus
-
-from app.public_records.connectors.base_connector import BasePublicRecordConnector
-from app.public_records.connectors.base_connector import collapse_whitespace
-from app.public_records.connectors.base_connector import infer_query_mode
-from app.public_records.connectors.base_connector import normalize_html_text
-from app.public_records.connectors.base_connector import normalize_public_record_key
-from app.public_records.connectors.base_connector import utc_now
-from app.public_records.models import BuildingFactsRecord
-from app.public_records.models import OwnerReferenceRecord
-from app.public_records.models import ParcelIdentifier
-from app.public_records.models import ParcelRecord
-from app.public_records.models import PropertyClass
-from app.public_records.models import PropertyTaxRecord
-from app.public_records.models import PublicRecordAddress
-from app.public_records.models import PublicRecordConnectorResult
-from app.public_records.models import PublicRecordConnectorStatus
-from app.public_records.models import PublicRecordSearchRequest
-from app.public_records.models import PublicRecordStatus
-from app.public_records.models import SaleHistoryRecord
-from app.public_records.models import SaleType
-from app.public_records.models import TaxAssessmentRecord
-from app.public_records.models import make_public_record_id
-from app.public_records.models import normalize_area
-from app.public_records.models import normalize_money
-from app.public_records.models import normalize_year
-from app.sources.source_client import SourceHttpResponse
-from app.sources.source_models import SourceAccessMethod
-from app.sources.source_models import SourceConfidenceBand
-from app.sources.source_models import SourceConfidenceReport
-from app.sources.source_models import SourceDataFormat
-from app.sources.source_models import SourceError
-from app.sources.source_models import SourceErrorType
-from app.sources.source_models import SourceRequestPolicy
-from app.sources.source_models import SourceStatus
-from app.sources.source_models import SourceType
-from app.sources.source_models import SourceWarning
-from app.sources.source_models import confidence_band
+from typing import Callable
+from typing import Iterable
+from typing import Mapping
+from typing import Sequence
 
 
 # ============================================================
-# SECTION 02 - CONNECTOR METADATA
+# SECTION 02 - MODULE METADATA
 # ============================================================
 
-NJ_MORRIS_TAX_BOARD_CONNECTOR_NAME = (
-    "Aussem1 Morris County NJ Tax Board Connector"
-)
+CONNECTOR_NAME = "Aussem1 Morris County Tax Board Connector"
 
-NJ_MORRIS_TAX_BOARD_CONNECTOR_VERSION = "0.1.0"
+CONNECTOR_VERSION = "0.2.0"
 
-NJ_MORRIS_TAX_BOARD_CONNECTOR_PHASE = "PHASE 2.20 PART 5.00"
+CONNECTOR_PHASE = "PHASE 2.47 PART 1.00"
 
-NJ_MORRIS_TAX_BOARD_CONNECTOR_STATUS = (
-    "real_public_record_tax_board_connector_foundation_active"
-)
+CONNECTOR_STATUS = "enterprise_morris_county_tax_board_connector_active"
 
-NJ_MORRIS_TAX_BOARD_SOURCE_ID = "nj_morris_tax_board"
+CONNECTOR_KEY = "nj_morris_tax_board"
 
-NJ_MORRIS_TAX_BOARD_SOURCE_NAME = "Morris County Tax Board"
+CONNECTOR_SOURCE_TYPE = "morris_tax_board"
 
-NJ_MORRIS_TAX_BOARD_SOURCE_URL = (
-    "https://mcweb1.co.morris.nj.us/MCTaxBoard/SearchTaxRecords.aspx"
-)
+CONNECTOR_AUTHORITY = "county_tax_board_public_record"
 
-NJ_MORRIS_TAX_BOARD_JURISDICTION = "Morris County, New Jersey"
+CONNECTOR_JURISDICTION = "Morris County, NJ"
 
-NJ_MORRIS_TAX_BOARD_STATE = "NJ"
-
-NJ_MORRIS_TAX_BOARD_COUNTY = "Morris"
+CONNECTOR_RELEASE_CHANNEL = "development"
 
 
 # ============================================================
-# SECTION 03 - CONNECTOR GOVERNANCE
+# SECTION 03 - GOVERNANCE
 # ============================================================
 
-NJ_MORRIS_TAX_BOARD_GOVERNANCE = {
-    "official_source": True,
-    "mock_records_allowed": False,
-    "fabricated_records_allowed": False,
-    "fabricated_values_allowed": False,
-    "fabricated_owners_allowed": False,
-    "fabricated_sale_history_allowed": False,
-    "active_listing_status_allowed": False,
-    "under_contract_status_allowed": False,
+TAX_BOARD_CONNECTOR_GOVERNANCE = {
+    "fabricated_tax_records_allowed": False,
+    "fabricated_assessment_values_allowed": False,
+    "fabricated_owner_references_allowed": False,
+    "fabricated_sale_references_allowed": False,
+    "fabricated_market_value_allowed": False,
+    "assessment_as_market_value_allowed": False,
+    "assessment_as_listing_price_allowed": False,
+    "assessment_as_appraisal_allowed": False,
     "source_attribution_required": True,
-    "manual_review_for_ambiguous_matches": True,
-    "manual_review_for_conflicting_records": True,
-    "public_records_only": True,
-    "listing_feed_required_for_listing_status": True,
+    "manual_review_for_ambiguous_records": True,
+    "missing_fields_must_remain_unavailable": True,
+    "partial_source_backed_results_allowed": True,
 }
 
 
-# ============================================================
-# SECTION 04 - SUPPORTED AND UNSUPPORTED CLAIMS
-# ============================================================
-
-NJ_MORRIS_TAX_BOARD_SUPPORTED_CLAIMS = [
-    "address_identity",
-    "parcel_identity",
-    "tax_assessment",
-    "property_tax",
-    "land_value",
-    "improvement_value",
-    "total_assessed_value",
-    "property_class",
-    "sale_history",
-    "owner_reference",
+SUPPORTED_FIELDS = [
+    "tax_year",
+    "block",
+    "lot",
+    "qualifier",
     "municipality",
     "county",
-    "state",
+    "state_code",
+    "property_class",
+    "land_assessment",
+    "improvement_assessment",
+    "total_assessment",
+    "owner_reference",
+    "sale_reference",
+    "source_attribution",
+    "manual_review_flags",
 ]
 
 
-NJ_MORRIS_TAX_BOARD_UNSUPPORTED_CLAIMS = [
+UNSUPPORTED_CLAIMS = [
+    "current_market_value",
     "active_listing_status",
     "under_contract_status",
-    "pending_status",
     "current_listing_price",
-    "current_days_on_market",
-    "current_showing_availability",
-    "current_offer_deadline",
-    "current_mls_status",
-    "current_broker_confirmation",
+    "appraisal_value",
+    "legal_title_opinion",
+    "survey_boundary",
 ]
 
 
-NJ_MORRIS_TAX_BOARD_SUPPORTED_QUERY_MODES = [
-    "address",
-    "block_lot",
-    "owner_reference",
+STANDARD_LIMITATIONS = [
+    "Tax assessment is public-record context and is not current market value.",
+    "Tax assessment is not a listing price.",
+    "Tax assessment is not an appraisal.",
+    "Owner reference is public-record context and may require manual review.",
+    "Sale reference from tax data is historical context only when source-backed.",
+    "Current listing status requires an authorized MLS, RESO, IDX, broker-authorized feed, or listing-provider source.",
 ]
 
 
 # ============================================================
-# SECTION 05 - FIELD ALIASES
+# SECTION 04 - REGEX / NORMALIZATION CONSTANTS
 # ============================================================
 
-TAX_BOARD_FIELD_ALIASES = {
-    "address": [
-        "address",
-        "location",
-        "property_location",
-        "property address",
-        "property location",
-    ],
-    "owner": [
-        "owner",
-        "owner name",
-        "taxpayer",
-        "tax payer",
-        "assessed owner",
-    ],
-    "municipality": [
-        "municipality",
-        "district",
-        "town",
-        "tax district",
-    ],
-    "block": [
-        "block",
-        "blk",
-    ],
-    "lot": [
-        "lot",
-        "lt",
-    ],
-    "qualifier": [
-        "qualifier",
-        "qual",
-        "q",
-    ],
-    "property_class": [
-        "class",
-        "property class",
-        "prop class",
-        "property_class",
-    ],
-    "land_value": [
-        "land",
-        "land value",
-        "assessed land",
-        "land assessment",
-    ],
-    "improvement_value": [
-        "improvement",
-        "improvements",
-        "improvement value",
-        "building value",
-        "assessed improvement",
-    ],
-    "total_assessed_value": [
-        "total",
-        "total value",
-        "total assessed",
-        "total assessment",
-        "assessment",
-    ],
-    "tax_year": [
-        "year",
-        "tax year",
-        "assessment year",
-    ],
-    "sale_date": [
-        "sale date",
-        "deed date",
-        "transfer date",
-    ],
-    "sale_price": [
-        "sale price",
-        "consideration",
-        "sales price",
-    ],
-    "year_built": [
-        "year built",
-        "yr built",
-    ],
-    "building_area_sqft": [
-        "building area",
-        "living area",
-        "sq ft",
-        "square feet",
-    ],
-    "lot_size": [
-        "lot size",
-        "acreage",
-        "acres",
-        "land area",
-    ],
+MONEY_RE = re.compile(r"[-+]?\$?\s*([0-9]{1,3}(?:,[0-9]{3})*|[0-9]+)(?:\.[0-9]+)?")
+
+YEAR_RE = re.compile(r"\b(19[0-9]{2}|20[0-9]{2}|21[0-9]{2})\b")
+
+BLOCK_LOT_RE = re.compile(
+    r"\b(?:BLOCK|BLK)\s*[:#\-]?\s*(?P<block>[A-Z0-9.\-]+)\b.*?\b(?:LOT|LT)\s*[:#\-]?\s*(?P<lot>[A-Z0-9.\-]+)\b",
+    re.IGNORECASE,
+)
+
+LOT_BLOCK_RE = re.compile(
+    r"\b(?:LOT|LT)\s*[:#\-]?\s*(?P<lot>[A-Z0-9.\-]+)\b.*?\b(?:BLOCK|BLK)\s*[:#\-]?\s*(?P<block>[A-Z0-9.\-]+)\b",
+    re.IGNORECASE,
+)
+
+QUALIFIER_RE = re.compile(
+    r"\b(?:QUALIFIER|QUAL|Q)\s*[:#\-]?\s*(?P<qualifier>[A-Z0-9.\-]+)\b",
+    re.IGNORECASE,
+)
+
+WHITESPACE_RE = re.compile(r"\s+")
+
+
+# ============================================================
+# SECTION 05 - MORRIS COUNTY MUNICIPALITY HINTS
+# ============================================================
+
+MORRIS_COUNTY_MUNICIPALITIES = {
+    "BOONTON": "Boonton",
+    "BOONTON TOWNSHIP": "Boonton Township",
+    "BUTLER": "Butler",
+    "CHATHAM": "Chatham",
+    "CHATHAM BOROUGH": "Chatham Borough",
+    "CHATHAM TOWNSHIP": "Chatham Township",
+    "CHESTER": "Chester",
+    "CHESTER BOROUGH": "Chester Borough",
+    "CHESTER TOWNSHIP": "Chester Township",
+    "DENVILLE": "Denville",
+    "DOVER": "Dover",
+    "EAST HANOVER": "East Hanover",
+    "FLORHAM PARK": "Florham Park",
+    "HANOVER": "Hanover",
+    "HANOVER TOWNSHIP": "Hanover Township",
+    "HARDING": "Harding",
+    "HARDING TOWNSHIP": "Harding Township",
+    "JEFFERSON": "Jefferson",
+    "JEFFERSON TOWNSHIP": "Jefferson Township",
+    "KINNELON": "Kinnelon",
+    "LINCOLN PARK": "Lincoln Park",
+    "LONG HILL": "Long Hill",
+    "LONG HILL TOWNSHIP": "Long Hill Township",
+    "MADISON": "Madison",
+    "MENDHAM": "Mendham",
+    "MENDHAM BOROUGH": "Mendham Borough",
+    "MENDHAM TOWNSHIP": "Mendham Township",
+    "MINE HILL": "Mine Hill",
+    "MONTVILLE": "Montville",
+    "MONTVILLE TOWNSHIP": "Montville Township",
+    "MORRIS": "Morris Township",
+    "MORRIS TOWNSHIP": "Morris Township",
+    "MORRIS PLAINS": "Morris Plains",
+    "MORRISTOWN": "Morristown",
+    "MOUNT ARLINGTON": "Mount Arlington",
+    "MOUNT OLIVE": "Mount Olive",
+    "MOUNT OLIVE TOWNSHIP": "Mount Olive Township",
+    "MOUNTAIN LAKES": "Mountain Lakes",
+    "NETCONG": "Netcong",
+    "PARSIPPANY": "Parsippany-Troy Hills",
+    "PARSIPPANY TROY HILLS": "Parsippany-Troy Hills",
+    "PARSIPPANY-TROY HILLS": "Parsippany-Troy Hills",
+    "PASSAIC TOWNSHIP": "Passaic Township",
+    "PEQUANNOCK": "Pequannock Township",
+    "PEQUANNOCK TOWNSHIP": "Pequannock Township",
+    "RANDOLPH": "Randolph",
+    "RANDOLPH TOWNSHIP": "Randolph Township",
+    "RIVERDALE": "Riverdale",
+    "ROCKAWAY": "Rockaway",
+    "ROCKAWAY BOROUGH": "Rockaway Borough",
+    "ROCKAWAY TOWNSHIP": "Rockaway Township",
+    "ROXBURY": "Roxbury Township",
+    "ROXBURY TOWNSHIP": "Roxbury Township",
+    "VICTORY GARDENS": "Victory Gardens",
+    "WASHINGTON": "Washington Township",
+    "WASHINGTON TOWNSHIP": "Washington Township",
+    "WHARTON": "Wharton",
 }
 
 
 # ============================================================
-# SECTION 06 - TAX BOARD SEARCH URL MODEL
+# SECTION 06 - ENUMERATIONS
 # ============================================================
 
-@dataclass
-class TaxBoardSearchTarget:
-    """
-    Search target representation for the Morris County Tax Board portal.
-    """
+class TaxBoardConnectorStatus(StrEnum):
+    SUCCESS = "success"
+    PARTIAL = "partial"
+    UNAVAILABLE = "unavailable"
+    SKIPPED = "skipped"
+    ERROR = "error"
 
-    mode: str
-    base_url: str
-    query_label: str
-    query_value: str | None = None
-    municipality: str | None = None
-    block: str | None = None
-    lot: str | None = None
-    qualifier: str | None = None
-    owner_reference: str | None = None
-    raw_query: str | None = None
-    url: str | None = None
-    metadata: dict[str, Any] = field(default_factory=dict)
 
-    def to_dict(self) -> dict[str, Any]:
-        """
-        Convert target to dictionary.
-        """
+class TaxBoardFactStatus(StrEnum):
+    SOURCE_BACKED = "source_backed"
+    INFERRED = "inferred"
+    UNAVAILABLE = "unavailable"
+    UNSUPPORTED = "unsupported"
+    MANUAL_REVIEW_REQUIRED = "manual_review_required"
+    CONFLICTED = "conflicted"
 
-        return {
-            "mode": self.mode,
-            "base_url": self.base_url,
-            "query_label": self.query_label,
-            "query_value": self.query_value,
-            "municipality": self.municipality,
-            "block": self.block,
-            "lot": self.lot,
-            "qualifier": self.qualifier,
-            "owner_reference": self.owner_reference,
-            "raw_query": self.raw_query,
-            "url": self.url,
-            "metadata": self.metadata,
-        }
+
+class TaxBoardQueryMode(StrEnum):
+    ADDRESS = "address"
+    BLOCK_LOT = "block_lot"
+    PARCEL_ID = "parcel_id"
+    OWNER_REFERENCE = "owner_reference"
+    UNKNOWN = "unknown"
+
+
+class ManualReviewSeverity(StrEnum):
+    INFO = "info"
+    WARNING = "warning"
+    ERROR = "error"
+    CRITICAL = "critical"
 
 
 # ============================================================
-# SECTION 07 - TAX BOARD PARSE RESULT MODEL
+# SECTION 07 - UTILITY FUNCTIONS
 # ============================================================
 
-@dataclass
-class TaxBoardParseResult:
-    """
-    Conservative parse result for Tax Board responses.
-    """
-
-    parsed: bool = False
-    raw_text_available: bool = False
-    candidate_count: int = 0
-    normalized_fields: dict[str, Any] = field(default_factory=dict)
-    candidate_records: list[dict[str, Any]] = field(default_factory=list)
-    warnings: list[SourceWarning] = field(default_factory=list)
-    errors: list[SourceError] = field(default_factory=list)
-    manual_review_required: bool = False
-    parser_notes: list[str] = field(default_factory=list)
-
-    def to_dict(self) -> dict[str, Any]:
-        """
-        Convert parse result to dictionary.
-        """
-
-        return {
-            "parsed": self.parsed,
-            "raw_text_available": self.raw_text_available,
-            "candidate_count": self.candidate_count,
-            "normalized_fields": self.normalized_fields,
-            "candidate_records": self.candidate_records,
-            "warnings": [
-                warning.to_dict()
-                for warning in self.warnings
-            ],
-            "errors": [
-                error.to_dict()
-                for error in self.errors
-            ],
-            "manual_review_required": self.manual_review_required,
-            "parser_notes": self.parser_notes,
-        }
+def utc_now() -> str:
+    return datetime.now(UTC).isoformat()
 
 
-# ============================================================
-# SECTION 08 - UTILITY FUNCTIONS
-# ============================================================
+def safe_string(value: Any) -> str:
+    if value is None:
+        return ""
 
-def clean_tax_board_text(
-    value: Any,
-) -> str:
-    """
-    Clean text from Tax Board response.
-    """
-
-    text = normalize_html_text(value)
-
-    text = text.replace("\xa0", " ")
-
-    return collapse_whitespace(text)
+    return str(value).strip()
 
 
-def normalize_tax_board_money(
-    value: Any,
-) -> float | None:
-    """
-    Normalize Tax Board money field.
-    """
+def normalize_text(value: Any) -> str:
+    text = safe_string(value).upper()
+    text = WHITESPACE_RE.sub(" ", text).strip()
 
-    return normalize_money(value)
+    return text
 
 
-def normalize_tax_board_year(
-    value: Any,
-) -> int | None:
-    """
-    Normalize Tax Board year field.
-    """
+def normalize_key(value: Any) -> str:
+    text = safe_string(value).lower()
+    output: list[str] = []
 
-    return normalize_year(value)
+    for character in text:
+        if character.isalnum():
+            output.append(character)
+        elif output and output[-1] != "_":
+            output.append("_")
 
-
-def normalize_tax_board_area(
-    value: Any,
-) -> float | None:
-    """
-    Normalize Tax Board area field.
-    """
-
-    return normalize_area(value)
+    return "".join(output).strip("_")
 
 
-def make_tax_board_warning(
-    *,
-    warning_code: str,
-    message: str,
-    severity: str = "medium",
-) -> SourceWarning:
-    """
-    Build standardized Tax Board warning.
-    """
+def clean_value(value: Any) -> str | None:
+    text = safe_string(value)
 
-    return SourceWarning(
-        warning_code=warning_code,
-        message=message,
-        severity=severity,
-        source_id=NJ_MORRIS_TAX_BOARD_SOURCE_ID,
+    return text or None
+
+
+def normalize_state(value: Any) -> str | None:
+    text = normalize_text(value)
+
+    if not text:
+        return None
+
+    if text in {"NJ", "NEW JERSEY"}:
+        return "NJ"
+
+    return text
+
+
+def normalize_county(value: Any) -> str | None:
+    text = safe_string(value)
+
+    if not text:
+        return None
+
+    text = text.replace("County", "").replace("county", "").strip()
+
+    return text.title()
+
+
+def normalize_municipality(value: Any) -> str | None:
+    text = normalize_text(value)
+
+    if not text:
+        return None
+
+    if text in MORRIS_COUNTY_MUNICIPALITIES:
+        return MORRIS_COUNTY_MUNICIPALITIES[text]
+
+    return safe_string(value).title()
+
+
+def normalize_block_lot(value: Any) -> str | None:
+    text = normalize_text(value)
+
+    if not text:
+        return None
+
+    cleaned = re.sub(r"[^A-Z0-9.\-]", "", text)
+
+    return cleaned or None
+
+
+def parse_money(value: Any) -> float | None:
+    if value in (None, ""):
+        return None
+
+    if isinstance(value, (int, float)) and math.isfinite(float(value)):
+        return float(value)
+
+    text = safe_string(value)
+
+    if not text:
+        return None
+
+    match = MONEY_RE.search(text)
+
+    if not match:
+        return None
+
+    try:
+        return float(match.group(1).replace(",", ""))
+    except Exception:
+        return None
+
+
+def parse_year(value: Any) -> str | None:
+    text = safe_string(value)
+
+    if not text:
+        return None
+
+    match = YEAR_RE.search(text)
+
+    if not match:
+        return None
+
+    return match.group(1)
+
+
+def clamp_score(value: Any) -> float:
+    try:
+        number = float(value)
+    except Exception:
+        return 0.0
+
+    if not math.isfinite(number):
+        return 0.0
+
+    return max(0.0, min(1.0, number))
+
+
+def stable_hash(value: Any) -> str:
+    payload = json.dumps(
+        value,
+        sort_keys=True,
+        default=str,
+        separators=(",", ":"),
     )
 
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
-def make_tax_board_error(
+
+def object_to_dict(value: Any) -> Any:
+    if value is None:
+        return None
+
+    if isinstance(value, StrEnum):
+        return value.value
+
+    if isinstance(value, (datetime, date)):
+        return value.isoformat()
+
+    if hasattr(value, "to_dict") and callable(value.to_dict):
+        return value.to_dict()
+
+    if hasattr(value, "__dataclass_fields__"):
+        return {
+            key: object_to_dict(item)
+            for key, item in asdict(value).items()
+        }
+
+    if isinstance(value, Mapping):
+        return {
+            str(key): object_to_dict(item)
+            for key, item in value.items()
+        }
+
+    if isinstance(value, Sequence) and not isinstance(
+        value,
+        (str, bytes, bytearray),
+    ):
+        return [
+            object_to_dict(item)
+            for item in value
+        ]
+
+    return value
+
+
+def flatten_mapping(
+    payload: Mapping[str, Any],
     *,
-    error_type: str,
-    message: str,
-    recoverable: bool = True,
-    retry_recommended: bool = False,
-    manual_review_required: bool = False,
-) -> SourceError:
-    """
-    Build standardized Tax Board error.
-    """
+    prefix: str = "",
+) -> dict[str, Any]:
+    result: dict[str, Any] = {}
 
-    return SourceError(
-        error_type=error_type,
-        message=message,
-        source_id=NJ_MORRIS_TAX_BOARD_SOURCE_ID,
-        source_name=NJ_MORRIS_TAX_BOARD_SOURCE_NAME,
-        recoverable=recoverable,
-        retry_recommended=retry_recommended,
-        manual_review_required=manual_review_required,
-    )
+    for key, value in payload.items():
+        full_key = f"{prefix}.{normalize_key(key)}" if prefix else normalize_key(key)
+
+        if isinstance(value, Mapping):
+            result.update(flatten_mapping(value, prefix=full_key))
+        else:
+            result[full_key] = value
+
+    return result
 
 
-def alias_matches(
-    key: str,
-    aliases: list[str],
-) -> bool:
-    """
-    Return whether normalized key matches aliases.
-    """
-
-    normalized_key = normalize_public_record_key(key)
-
-    normalized_aliases = {
-        normalize_public_record_key(alias)
-        for alias in aliases
-    }
-
-    return normalized_key in normalized_aliases
-
-
-def resolve_tax_board_field(
-    key: str,
-) -> str | None:
-    """
-    Resolve Tax Board field alias into canonical field.
-    """
-
-    for canonical, aliases in TAX_BOARD_FIELD_ALIASES.items():
-        if alias_matches(key, aliases):
-            return canonical
+def first_value(payload: Mapping[str, Any], keys: Sequence[str]) -> Any:
+    for key in keys:
+        if key in payload and payload[key] not in (None, "", [], {}):
+            return payload[key]
 
     return None
 
 
-def extract_label_value_pairs_from_text(
-    text: str,
-) -> dict[str, str]:
-    """
-    Extract conservative label-value pairs from visible text.
+# ============================================================
+# SECTION 08 - DATA CONTRACTS
+# ============================================================
 
-    This does not guess missing values.
-    It only extracts explicit label/value patterns.
-    """
+@dataclass
+class TaxBoardRequest:
+    raw_query: str | None = None
+    street_address: str | None = None
+    normalized_address: str | None = None
+    municipality: str | None = None
+    county: str | None = None
+    state: str | None = None
+    state_code: str | None = None
+    postal_code: str | None = None
+    block: str | None = None
+    lot: str | None = None
+    qualifier: str | None = None
+    parcel_id: str | None = None
+    owner_reference: str | None = None
+    tax_year: str | None = None
+    query_mode: str = TaxBoardQueryMode.UNKNOWN.value
+    strict_source_mode: bool = True
+    metadata: dict[str, Any] = field(default_factory=dict)
 
-    pairs: dict[str, str] = {}
-
-    if not text:
-        return pairs
-
-    lines = [
-        clean_tax_board_text(line)
-        for line in text.splitlines()
-        if clean_tax_board_text(line)
-    ]
-
-    for line in lines:
-        if ":" in line:
-            raw_key, raw_value = line.split(":", 1)
-            key = normalize_public_record_key(raw_key)
-            value = clean_tax_board_text(raw_value)
-
-            if key and value:
-                pairs[key] = value
-
-    return pairs
+    def to_dict(self) -> dict[str, Any]:
+        return object_to_dict(asdict(self))
 
 
-def extract_candidate_assessment_rows(
-    text: str,
-) -> list[dict[str, Any]]:
-    """
-    Extract conservative candidate rows from text.
+@dataclass
+class TaxBoardSourceReference:
+    source_name: str = CONNECTOR_NAME
+    source_type: str = CONNECTOR_SOURCE_TYPE
+    connector_key: str = CONNECTOR_KEY
+    source_authority: str = CONNECTOR_AUTHORITY
+    jurisdiction: str = CONNECTOR_JURISDICTION
+    record_id: str | None = None
+    source_url: str | None = None
+    retrieved_at: str = field(default_factory=utc_now)
+    field_path: str | None = None
+    confidence: float = 0.0
+    raw_payload_hash: str | None = None
+    metadata: dict[str, Any] = field(default_factory=dict)
 
-    This is intentionally cautious. It only returns row-like candidates
-    when there is enough explicit signal to warrant manual review.
-    """
-
-    candidates: list[dict[str, Any]] = []
-
-    if not text:
-        return candidates
-
-    cleaned = clean_tax_board_text(text)
-
-    block_lot_pattern = re.compile(
-        r"\b(?:block|blk)\s*[:#]?\s*([A-Za-z0-9.\-]+)\s+"
-        r"(?:lot|lt)\s*[:#]?\s*([A-Za-z0-9.\-]+)",
-        re.IGNORECASE,
-    )
-
-    for match in block_lot_pattern.finditer(cleaned):
-        candidates.append(
-            {
-                "block": match.group(1),
-                "lot": match.group(2),
-                "evidence": match.group(0),
-                "confidence_hint": 0.35,
-                "manual_review_required": True,
-            }
-        )
-
-    return candidates
+    def to_dict(self) -> dict[str, Any]:
+        return object_to_dict(asdict(self))
 
 
-def normalize_tax_board_fields(
-    raw_fields: dict[str, Any],
-) -> dict[str, Any]:
-    """
-    Normalize raw Tax Board fields into canonical keys.
-    """
+@dataclass
+class TaxAssessmentRecord:
+    tax_year: str | None = None
+    block: str | None = None
+    lot: str | None = None
+    qualifier: str | None = None
+    municipality: str | None = None
+    county: str | None = "Morris"
+    state_code: str | None = "NJ"
+    property_class: str | None = None
+    land_assessment: float | None = None
+    improvement_assessment: float | None = None
+    total_assessment: float | None = None
+    owner_reference: str | None = None
+    sale_date: str | None = None
+    sale_price: float | None = None
+    deed_book: str | None = None
+    deed_page: str | None = None
+    document_number: str | None = None
+    source_status: str = TaxBoardFactStatus.UNAVAILABLE.value
+    confidence: float = 0.0
+    manual_review_required: bool = False
+    manual_review_reasons: list[str] = field(default_factory=list)
+    source: TaxBoardSourceReference = field(default_factory=TaxBoardSourceReference)
+    raw_payload: dict[str, Any] = field(default_factory=dict)
 
-    normalized: dict[str, Any] = {}
-
-    for raw_key, raw_value in raw_fields.items():
-        canonical = resolve_tax_board_field(raw_key)
-
-        if not canonical:
-            continue
-
-        value = clean_tax_board_text(raw_value)
-
-        if not value:
-            continue
-
-        normalized[canonical] = value
-
-    return normalized
+    def to_dict(self) -> dict[str, Any]:
+        return object_to_dict(asdict(self))
 
 
-def build_tax_board_confidence(
-    *,
-    has_parcel: bool,
-    has_address: bool,
-    has_assessment: bool,
-    has_owner: bool,
-    has_sale: bool,
-    parser_manual_review: bool,
-    source_successful: bool,
-) -> float:
-    """
-    Build conservative confidence score for Tax Board parse.
-    """
+@dataclass
+class TaxBoardManualReviewItem:
+    code: str
+    message: str
+    severity: str = ManualReviewSeverity.WARNING.value
+    field_path: str | None = None
+    required_action: str | None = None
+    metadata: dict[str, Any] = field(default_factory=dict)
 
-    if not source_successful:
-        return 0.0
+    def to_dict(self) -> dict[str, Any]:
+        return object_to_dict(asdict(self))
 
-    score = 0.25
 
-    if has_parcel:
-        score += 0.20
+@dataclass
+class TaxBoardConnectorResult:
+    success: bool
+    status: str
+    query_mode: str
+    request: TaxBoardRequest
+    records: list[dict[str, Any]] = field(default_factory=list)
+    facts: dict[str, Any] = field(default_factory=dict)
+    sources: list[TaxBoardSourceReference] = field(default_factory=list)
+    manual_review_items: list[TaxBoardManualReviewItem] = field(default_factory=list)
+    unavailable_fields: list[dict[str, Any]] = field(default_factory=list)
+    unsupported_claims: list[dict[str, Any]] = field(default_factory=list)
+    warnings: list[str] = field(default_factory=list)
+    errors: list[dict[str, Any]] = field(default_factory=list)
+    confidence: float = 0.0
+    completeness_score: float = 0.0
+    source_coverage_score: float = 0.0
+    limitations: list[str] = field(default_factory=lambda: list(STANDARD_LIMITATIONS))
+    governance: dict[str, Any] = field(default_factory=lambda: TAX_BOARD_CONNECTOR_GOVERNANCE.copy())
+    metadata: dict[str, Any] = field(default_factory=dict)
 
-    if has_address:
-        score += 0.15
+    def to_dict(self) -> dict[str, Any]:
+        payload = object_to_dict(asdict(self))
 
-    if has_assessment:
-        score += 0.20
+        if isinstance(payload.get("facts"), Mapping):
+            for key, value in payload["facts"].items():
+                payload.setdefault(key, value)
 
-    if has_owner:
-        score += 0.05
-
-    if has_sale:
-        score += 0.05
-
-    if parser_manual_review:
-        score -= 0.20
-
-    return max(0.0, min(0.85, score))
+        return payload
 
 
 # ============================================================
-# SECTION 09 - CONNECTOR CLASS
+# SECTION 09 - REQUEST NORMALIZER
 # ============================================================
 
-class NJMorrisTaxBoardConnector(BasePublicRecordConnector):
-    """
-    Morris County Tax Board connector.
-
-    This connector provides source-governed access and conservative
-    parsing scaffolding for the Morris County Tax Board public portal.
-
-    It does not fabricate records. If records cannot be confidently
-    parsed, it returns an empty or manual-review result.
-    """
-
-    connector_id = "nj_morris_tax_board_connector"
-    connector_name = NJ_MORRIS_TAX_BOARD_CONNECTOR_NAME
-    connector_version = NJ_MORRIS_TAX_BOARD_CONNECTOR_VERSION
-    connector_phase = NJ_MORRIS_TAX_BOARD_CONNECTOR_PHASE
-
-    source_id = NJ_MORRIS_TAX_BOARD_SOURCE_ID
-    source_name = NJ_MORRIS_TAX_BOARD_SOURCE_NAME
-    source_type = SourceType.PUBLIC_RECORD.value
-    source_url = NJ_MORRIS_TAX_BOARD_SOURCE_URL
-    documentation_url = NJ_MORRIS_TAX_BOARD_SOURCE_URL
-
-    jurisdiction = NJ_MORRIS_TAX_BOARD_JURISDICTION
-    state = NJ_MORRIS_TAX_BOARD_STATE
-    county = NJ_MORRIS_TAX_BOARD_COUNTY
-    municipality = None
-
-    access_method = SourceAccessMethod.PUBLIC_WEB_PORTAL.value
-    data_format = SourceDataFormat.HTML.value
-    status = PublicRecordConnectorStatus.READY.value
-
-    supported_claims = NJ_MORRIS_TAX_BOARD_SUPPORTED_CLAIMS
-    unsupported_claims = NJ_MORRIS_TAX_BOARD_UNSUPPORTED_CLAIMS
-    supported_query_modes = NJ_MORRIS_TAX_BOARD_SUPPORTED_QUERY_MODES
-
-    def __init__(
+class TaxBoardRequestNormalizer:
+    def normalize(
         self,
-        *,
-        request_policy: SourceRequestPolicy | None = None,
-    ) -> None:
-        super().__init__(
-            request_policy=request_policy
-            or SourceRequestPolicy(
-                timeout_seconds=25,
-                max_retries=1,
-                respect_rate_limits=True,
-                user_agent_required=True,
-                uncontrolled_scraping_allowed=False,
-                bypass_access_controls_allowed=False,
-                store_raw_payload=False,
-                manual_review_on_ambiguity=True,
-                notes=[
-                    "Morris County Tax Board governed public portal connector.",
-                    "No fake property records.",
-                    "No active listing status claims.",
-                    "Manual review required when parsing is ambiguous.",
-                ],
+        request: TaxBoardRequest | Mapping[str, Any] | str | None = None,
+        **kwargs: Any,
+    ) -> TaxBoardRequest:
+        if isinstance(request, TaxBoardRequest):
+            normalized = request
+        elif isinstance(request, Mapping):
+            normalized = self.from_mapping(request)
+        elif isinstance(request, str):
+            normalized = TaxBoardRequest(
+                raw_query=request,
+                street_address=request,
+                normalized_address=request,
             )
+        else:
+            normalized = self.from_mapping(kwargs)
+
+        for key, value in kwargs.items():
+            if hasattr(normalized, key) and value not in (None, ""):
+                setattr(normalized, key, value)
+
+        normalized.state_code = normalize_state(normalized.state_code or normalized.state) or "NJ"
+        normalized.state = normalized.state_code
+        normalized.county = normalize_county(normalized.county) or "Morris"
+        normalized.municipality = normalize_municipality(normalized.municipality)
+        normalized.block = normalize_block_lot(normalized.block)
+        normalized.lot = normalize_block_lot(normalized.lot)
+        normalized.qualifier = normalize_block_lot(normalized.qualifier)
+        normalized.tax_year = parse_year(normalized.tax_year)
+
+        self.extract_block_lot_from_query(normalized)
+        self.detect_municipality_from_query(normalized)
+
+        if normalized.query_mode == TaxBoardQueryMode.UNKNOWN.value:
+            normalized.query_mode = self.detect_query_mode(normalized)
+
+        return normalized
+
+    @staticmethod
+    def from_mapping(payload: Mapping[str, Any]) -> TaxBoardRequest:
+        return TaxBoardRequest(
+            raw_query=payload.get("raw_query")
+            or payload.get("query")
+            or payload.get("address")
+            or payload.get("raw_address"),
+            street_address=payload.get("street_address")
+            or payload.get("address_line_1")
+            or payload.get("normalized_street_address"),
+            normalized_address=payload.get("normalized_address")
+            or payload.get("canonical_address"),
+            municipality=payload.get("municipality") or payload.get("city"),
+            county=payload.get("county"),
+            state=payload.get("state") or payload.get("state_code"),
+            state_code=payload.get("state_code") or payload.get("state"),
+            postal_code=payload.get("postal_code") or payload.get("zip"),
+            block=payload.get("block"),
+            lot=payload.get("lot"),
+            qualifier=payload.get("qualifier"),
+            parcel_id=payload.get("parcel_id") or payload.get("parcel_number"),
+            owner_reference=payload.get("owner_reference") or payload.get("owner"),
+            tax_year=payload.get("tax_year"),
+            query_mode=payload.get("query_mode")
+            or payload.get("primary_query_mode")
+            or TaxBoardQueryMode.UNKNOWN.value,
+            strict_source_mode=bool(payload.get("strict_source_mode", True)),
+            metadata=dict(payload.get("metadata") or {}),
         )
 
-    # ========================================================
-    # SECTION 09.01 - CONNECTOR IDENTITY
-    # ========================================================
+    @staticmethod
+    def detect_query_mode(request: TaxBoardRequest) -> str:
+        if request.block and request.lot:
+            return TaxBoardQueryMode.BLOCK_LOT.value
 
-    def connector_key(
-        self,
-    ) -> str:
-        """
-        Return connector key.
-        """
+        if request.parcel_id:
+            return TaxBoardQueryMode.PARCEL_ID.value
 
-        return "nj_morris_tax_board_connector"
+        if request.owner_reference and not (request.street_address or request.raw_query):
+            return TaxBoardQueryMode.OWNER_REFERENCE.value
 
-    def get_governance(
-        self,
-    ) -> dict[str, Any]:
-        """
-        Return connector governance rules.
-        """
+        if request.street_address or request.normalized_address or request.raw_query:
+            return TaxBoardQueryMode.ADDRESS.value
 
-        governance = super().get_governance()
+        return TaxBoardQueryMode.UNKNOWN.value
 
-        governance.update(NJ_MORRIS_TAX_BOARD_GOVERNANCE)
-
-        return governance
-
-    # ========================================================
-    # SECTION 09.02 - SEARCH TARGET BUILDERS
-    # ========================================================
-
-    def build_search_target(
-        self,
-        request: PublicRecordSearchRequest,
-    ) -> TaxBoardSearchTarget:
-        """
-        Build conservative search target.
-        """
-
-        query_mode = infer_query_mode(request)
-
-        if query_mode == "block_lot":
-            query_label = "block_lot"
-            query_value = f"{request.block} / {request.lot}"
-
-            if request.qualifier:
-                query_value = f"{query_value} / {request.qualifier}"
-
-            return TaxBoardSearchTarget(
-                mode=query_mode,
-                base_url=self.source_url or NJ_MORRIS_TAX_BOARD_SOURCE_URL,
-                query_label=query_label,
-                query_value=query_value,
-                municipality=request.municipality,
-                block=request.block,
-                lot=request.lot,
-                qualifier=request.qualifier,
-                raw_query=request.raw_query,
-                url=self.source_url,
-                metadata={
-                    "source_note": (
-                        "Portal may require interactive form submission. "
-                        "Connector preserves request context and source URL."
-                    ),
-                },
-            )
-
-        if query_mode == "owner_reference":
-            return TaxBoardSearchTarget(
-                mode=query_mode,
-                base_url=self.source_url or NJ_MORRIS_TAX_BOARD_SOURCE_URL,
-                query_label="owner_reference",
-                query_value=request.owner_reference,
-                municipality=request.municipality,
-                owner_reference=request.owner_reference,
-                raw_query=request.raw_query,
-                url=self.source_url,
-                metadata={
-                    "encoded_owner_reference": quote_plus(
-                        request.owner_reference or ""
-                    ),
-                    "source_note": (
-                        "Portal may require interactive form submission. "
-                        "Owner reference search is source-dependent."
-                    ),
-                },
-            )
-
-        address_value = (
-            request.street_address
-            or request.raw_query
-            or (
-                request.address.normalized_address
-                if request.address
-                else None
-            )
+    @staticmethod
+    def extract_block_lot_from_query(request: TaxBoardRequest) -> None:
+        text = " ".join(
+            value
+            for value in [
+                request.raw_query,
+                request.street_address,
+                request.normalized_address,
+            ]
+            if value
         )
-
-        return TaxBoardSearchTarget(
-            mode=query_mode,
-            base_url=self.source_url or NJ_MORRIS_TAX_BOARD_SOURCE_URL,
-            query_label="address",
-            query_value=address_value,
-            municipality=request.municipality,
-            raw_query=request.raw_query,
-            url=self.source_url,
-            metadata={
-                "encoded_address": quote_plus(address_value or ""),
-                "source_note": (
-                    "Portal may require interactive form submission. "
-                    "Address search is preserved for manual or future automated lookup."
-                ),
-            },
-        )
-
-    # ========================================================
-    # SECTION 09.03 - MAIN SEARCH
-    # ========================================================
-
-    def search(
-        self,
-        request: PublicRecordSearchRequest,
-    ) -> PublicRecordConnectorResult:
-        """
-        Execute Tax Board lookup lifecycle.
-
-        This version safely probes the official source URL and returns
-        conservative normalized data only when explicit parseable facts
-        exist in the response.
-
-        If the portal requires interactive workflow or returns no
-        parseable record data, the connector returns an empty/manual
-        review result rather than fabricating a property record.
-        """
-
-        validation = self.validate_request(request)
-
-        if not validation.valid:
-            return self.make_error_result(
-                request=request,
-                errors=validation.errors,
-                warnings=validation.warnings,
-                status=PublicRecordConnectorStatus.ERROR.value,
-                explanation="Morris County Tax Board request validation failed.",
-            )
-
-        search_target = self.build_search_target(request)
-
-        response = self.get_source_homepage()
-
-        if response is None:
-            return self.make_error_result(
-                request=request,
-                errors=[
-                    make_tax_board_error(
-                        error_type=SourceErrorType.SOURCE_UNAVAILABLE.value,
-                        message="Morris County Tax Board source URL is unavailable.",
-                        recoverable=True,
-                        retry_recommended=True,
-                    )
-                ],
-                status=PublicRecordConnectorStatus.ERROR.value,
-                explanation="Tax Board source URL is unavailable.",
-            )
-
-        source_result = self.make_source_result_from_http_response(
-            response=response,
-            request=request,
-        )
-
-        if not response.is_successful():
-            return self.make_error_result(
-                request=request,
-                errors=list(response.errors)
-                or [
-                    make_tax_board_error(
-                        error_type=SourceErrorType.SOURCE_UNAVAILABLE.value,
-                        message="Morris County Tax Board source request failed.",
-                        recoverable=True,
-                        retry_recommended=True,
-                    )
-                ],
-                warnings=list(response.warnings),
-                status=PublicRecordConnectorStatus.ERROR.value,
-                explanation="Tax Board source request did not complete successfully.",
-            )
-
-        parsed = self.parse_tax_board_response(
-            response=response,
-            request=request,
-            search_target=search_target,
-        )
-
-        if parsed.errors:
-            return self.make_error_result(
-                request=request,
-                errors=parsed.errors,
-                warnings=parsed.warnings,
-                status=PublicRecordConnectorStatus.ERROR.value,
-                explanation="Tax Board response parsing returned errors.",
-            )
-
-        normalized_result = self.build_connector_result_from_parse(
-            request=request,
-            response=response,
-            source_result=source_result,
-            search_target=search_target,
-            parse_result=parsed,
-        )
-
-        return normalized_result
-
-    # ========================================================
-    # SECTION 09.04 - PARSER
-    # ========================================================
-
-    def parse_tax_board_response(
-        self,
-        *,
-        response: SourceHttpResponse,
-        request: PublicRecordSearchRequest,
-        search_target: TaxBoardSearchTarget,
-    ) -> TaxBoardParseResult:
-        """
-        Parse Tax Board source response conservatively.
-        """
-
-        result = TaxBoardParseResult()
-
-        text = response.text or ""
 
         if not text:
-            result.warnings.append(
-                make_tax_board_warning(
-                    warning_code="empty_tax_board_response",
-                    message="Tax Board source response contained no text.",
-                    severity="medium",
-                )
-            )
-            result.parser_notes.append(
-                "No text available from source response."
-            )
-            return result
+            return
 
-        result.raw_text_available = True
+        match = BLOCK_LOT_RE.search(text) or LOT_BLOCK_RE.search(text)
 
-        pairs = extract_label_value_pairs_from_text(text)
-        normalized_fields = normalize_tax_board_fields(pairs)
-        candidates = extract_candidate_assessment_rows(text)
+        if match:
+            request.block = request.block or normalize_block_lot(match.group("block"))
+            request.lot = request.lot or normalize_block_lot(match.group("lot"))
 
-        result.normalized_fields = normalized_fields
-        result.candidate_records = candidates
-        result.candidate_count = len(candidates)
+        qualifier_match = QUALIFIER_RE.search(text)
 
-        has_direct_fields = bool(normalized_fields)
-        has_candidates = bool(candidates)
-
-        if has_direct_fields:
-            result.parsed = True
-            result.parser_notes.append(
-                "Explicit label/value public-record fields were found."
+        if qualifier_match:
+            request.qualifier = request.qualifier or normalize_block_lot(
+                qualifier_match.group("qualifier")
             )
 
-        if has_candidates:
-            result.parsed = True
-            result.manual_review_required = True
-            result.warnings.append(
-                make_tax_board_warning(
-                    warning_code="candidate_rows_require_review",
-                    message=(
-                        "Potential Tax Board row candidates were found but "
-                        "require manual review before being treated as authoritative."
-                    ),
-                    severity="medium",
-                )
-            )
+    @staticmethod
+    def detect_municipality_from_query(request: TaxBoardRequest) -> None:
+        if request.municipality:
+            return
 
-        if not has_direct_fields and not has_candidates:
-            result.warnings.append(
-                make_tax_board_warning(
-                    warning_code="no_parseable_tax_board_record",
-                    message=(
-                        "Tax Board source responded, but no explicit parseable "
-                        "property record fields were found."
-                    ),
-                    severity="medium",
-                )
+        text = normalize_text(
+            " ".join(
+                value
+                for value in [
+                    request.raw_query,
+                    request.street_address,
+                    request.normalized_address,
+                ]
+                if value
             )
-            result.parser_notes.append(
-                "Portal homepage or interactive form likely returned instead of a property record."
-            )
-
-        query_mode = infer_query_mode(request)
-
-        result.parser_notes.append(
-            f"Query mode: {query_mode}."
         )
 
-        result.parser_notes.append(
-            f"Search target: {search_target.query_label}."
-        )
+        best: tuple[int, str] | None = None
 
-        return result
+        for key, display in MORRIS_COUNTY_MUNICIPALITIES.items():
+            if f" {key} " in f" {text} ":
+                length = len(key)
+                if best is None or length > best[0]:
+                    best = (length, display)
 
-    def parse_source_response(
+        if best:
+            request.municipality = best[1]
+
+
+# ============================================================
+# SECTION 10 - SOURCE-BACKED RECORD NORMALIZER
+# ============================================================
+
+class TaxBoardRecordNormalizer:
+    FIELD_CANDIDATES = {
+        "tax_year": [
+            "tax_year",
+            "year",
+            "assessment_year",
+            "tax.assessment_year",
+            "assessment.tax_year",
+        ],
+        "block": [
+            "block",
+            "blk",
+            "tax.block",
+            "assessment.block",
+            "parcel.block",
+        ],
+        "lot": [
+            "lot",
+            "lt",
+            "tax.lot",
+            "assessment.lot",
+            "parcel.lot",
+        ],
+        "qualifier": [
+            "qualifier",
+            "qual",
+            "q",
+            "tax.qualifier",
+            "assessment.qualifier",
+        ],
+        "municipality": [
+            "municipality",
+            "muni",
+            "city",
+            "town",
+            "tax.municipality",
+            "assessment.municipality",
+        ],
+        "property_class": [
+            "property_class",
+            "class",
+            "prop_class",
+            "tax.property_class",
+            "assessment.property_class",
+        ],
+        "land_assessment": [
+            "land_assessment",
+            "land_value",
+            "land_assessed_value",
+            "tax.land_assessment",
+            "assessment.land_assessment",
+        ],
+        "improvement_assessment": [
+            "improvement_assessment",
+            "improvement_value",
+            "improvements",
+            "building_assessment",
+            "tax.improvement_assessment",
+            "assessment.improvement_assessment",
+        ],
+        "total_assessment": [
+            "total_assessment",
+            "assessed_value",
+            "total_assessed_value",
+            "tax.total_assessment",
+            "assessment.total_assessment",
+        ],
+        "owner_reference": [
+            "owner",
+            "owner_name",
+            "owner_reference",
+            "tax.owner",
+            "assessment.owner",
+        ],
+        "sale_date": [
+            "sale_date",
+            "last_sale_date",
+            "deed_date",
+            "tax.sale_date",
+        ],
+        "sale_price": [
+            "sale_price",
+            "last_sale_price",
+            "consideration",
+            "tax.sale_price",
+        ],
+        "deed_book": [
+            "deed_book",
+            "book",
+            "sale_book",
+        ],
+        "deed_page": [
+            "deed_page",
+            "page",
+            "sale_page",
+        ],
+        "document_number": [
+            "document_number",
+            "instrument_number",
+            "doc_number",
+            "id",
+        ],
+    }
+
+    def normalize_record(
         self,
+        record_payload: Mapping[str, Any],
         *,
-        response: SourceHttpResponse,
-        request: PublicRecordSearchRequest,
-    ) -> PublicRecordConnectorResult:
-        """
-        Base connector parser bridge.
-        """
+        request: TaxBoardRequest,
+        source: TaxBoardSourceReference | None = None,
+    ) -> TaxAssessmentRecord:
+        flattened = flatten_mapping(record_payload)
 
-        search_target = self.build_search_target(request)
+        tax_year = parse_year(self.extract(flattened, "tax_year")) or request.tax_year
+        block = normalize_block_lot(self.extract(flattened, "block") or request.block)
+        lot = normalize_block_lot(self.extract(flattened, "lot") or request.lot)
+        qualifier = normalize_block_lot(
+            self.extract(flattened, "qualifier") or request.qualifier
+        )
+        municipality = normalize_municipality(
+            self.extract(flattened, "municipality") or request.municipality
+        )
+        property_class = clean_value(self.extract(flattened, "property_class"))
+        land_assessment = parse_money(self.extract(flattened, "land_assessment"))
+        improvement_assessment = parse_money(
+            self.extract(flattened, "improvement_assessment")
+        )
+        total_assessment = parse_money(self.extract(flattened, "total_assessment"))
+        owner_reference = clean_value(self.extract(flattened, "owner_reference"))
+        sale_date = clean_value(self.extract(flattened, "sale_date"))
+        sale_price = parse_money(self.extract(flattened, "sale_price"))
+        deed_book = clean_value(self.extract(flattened, "deed_book"))
+        deed_page = clean_value(self.extract(flattened, "deed_page"))
+        document_number = clean_value(self.extract(flattened, "document_number"))
 
-        parse_result = self.parse_tax_board_response(
-            response=response,
-            request=request,
-            search_target=search_target,
+        source = source or TaxBoardSourceReference(
+            confidence=0.0,
+            raw_payload_hash=stable_hash(record_payload),
         )
 
-        source_result = self.make_source_result_from_http_response(
-            response=response,
-            request=request,
+        confidence = self.score_record(
+            tax_year=tax_year,
+            block=block,
+            lot=lot,
+            municipality=municipality,
+            property_class=property_class,
+            land_assessment=land_assessment,
+            improvement_assessment=improvement_assessment,
+            total_assessment=total_assessment,
+            owner_reference=owner_reference,
+            sale_date=sale_date,
+            sale_price=sale_price,
         )
 
-        return self.build_connector_result_from_parse(
-            request=request,
-            response=response,
-            source_result=source_result,
-            search_target=search_target,
-            parse_result=parse_result,
+        manual_review_reasons = self.manual_review_reasons(
+            tax_year=tax_year,
+            block=block,
+            lot=lot,
+            municipality=municipality,
+            total_assessment=total_assessment,
+            record_payload=record_payload,
         )
 
-    # ========================================================
-    # SECTION 09.05 - NORMALIZATION FROM PARSE
-    # ========================================================
-
-    def build_connector_result_from_parse(
-        self,
-        *,
-        request: PublicRecordSearchRequest,
-        response: SourceHttpResponse,
-        source_result: Any,
-        search_target: TaxBoardSearchTarget,
-        parse_result: TaxBoardParseResult,
-    ) -> PublicRecordConnectorResult:
-        """
-        Convert conservative parse result into connector result.
-        """
-
-        fields = parse_result.normalized_fields
-
-        if not fields and not parse_result.candidate_records:
-            return self.empty_result(
-                request=request,
-                explanation=(
-                    "Morris County Tax Board responded, but no explicit "
-                    "property record data was available to normalize."
-                ),
-                warnings=parse_result.warnings
-                + [
-                    make_tax_board_warning(
-                        warning_code="manual_source_lookup_recommended",
-                        message=(
-                            "Manual review or future form-submission automation "
-                            "may be required for this Tax Board source."
-                        ),
-                        severity="medium",
-                    )
-                ],
-            )
-
-        parcel_identifier = self.build_parcel_identifier_from_fields(
-            request=request,
-            fields=fields,
-            search_target=search_target,
+        status_value = (
+            TaxBoardFactStatus.SOURCE_BACKED.value
+            if confidence > 0
+            else TaxBoardFactStatus.UNAVAILABLE.value
         )
 
-        address = self.build_address_from_fields(
-            request=request,
-            fields=fields,
-            confidence=0.50,
-        )
+        if manual_review_reasons and confidence > 0:
+            status_value = TaxBoardFactStatus.MANUAL_REVIEW_REQUIRED.value
 
-        parcel_records: list[ParcelRecord] = []
-        tax_assessment_records: list[TaxAssessmentRecord] = []
-        property_tax_records: list[PropertyTaxRecord] = []
-        building_facts_records: list[BuildingFactsRecord] = []
-        sale_history_records: list[SaleHistoryRecord] = []
-        owner_reference_records: list[OwnerReferenceRecord] = []
+        source.confidence = confidence
+        source.raw_payload_hash = stable_hash(record_payload)
 
-        has_parcel = bool(
-            parcel_identifier.parcel_id
-            or parcel_identifier.block
-            or parcel_identifier.lot
-            or parcel_identifier.pams_pin
-        )
-
-        has_address = bool(
-            address.normalized_address
-            or address.street_address
-            or address.raw_address
-        )
-
-        has_assessment = any(
-            fields.get(key)
-            for key in [
-                "land_value",
-                "improvement_value",
-                "total_assessed_value",
-            ]
-        )
-
-        has_owner = bool(fields.get("owner"))
-
-        has_sale = bool(fields.get("sale_date") or fields.get("sale_price"))
-
-        confidence = build_tax_board_confidence(
-            has_parcel=has_parcel,
-            has_address=has_address,
-            has_assessment=has_assessment,
-            has_owner=has_owner,
-            has_sale=has_sale,
-            parser_manual_review=parse_result.manual_review_required,
-            source_successful=response.is_successful(),
-        )
-
-        if has_parcel:
-            parcel_records.append(
-                self.build_parcel_record(
-                    request=request,
-                    parcel_identifier=parcel_identifier,
-                    address=address,
-                    property_class=fields.get(
-                        "property_class",
-                        PropertyClass.UNKNOWN.value,
-                    ),
-                    confidence=confidence,
-                    status=(
-                        PublicRecordStatus.MANUAL_REVIEW_REQUIRED.value
-                        if parse_result.manual_review_required
-                        else PublicRecordStatus.PARTIAL.value
-                    ),
-                    notes=[
-                        "Parcel identity parsed from Morris County Tax Board response.",
-                    ],
-                    warnings=list(parse_result.warnings),
-                )
-            )
-
-        if has_assessment:
-            tax_assessment_records.append(
-                self.build_tax_assessment_record_from_fields(
-                    request=request,
-                    fields=fields,
-                    parcel_identifier=parcel_identifier,
-                    address=address,
-                    confidence=confidence,
-                    manual_review_required=parse_result.manual_review_required,
-                )
-            )
-
-        if has_sale:
-            sale_history_records.append(
-                self.build_sale_history_record_from_fields(
-                    request=request,
-                    fields=fields,
-                    parcel_identifier=parcel_identifier,
-                    address=address,
-                    confidence=min(confidence, 0.65),
-                    manual_review_required=parse_result.manual_review_required,
-                )
-            )
-
-        if has_owner:
-            owner_reference_records.append(
-                self.build_owner_reference_record_from_fields(
-                    request=request,
-                    fields=fields,
-                    parcel_identifier=parcel_identifier,
-                    address=address,
-                    confidence=min(confidence, 0.60),
-                    manual_review_required=parse_result.manual_review_required,
-                )
-            )
-
-        building_record = self.build_building_facts_record_from_fields(
-            request=request,
-            fields=fields,
-            parcel_identifier=parcel_identifier,
-            address=address,
-            confidence=min(confidence, 0.55),
-            manual_review_required=parse_result.manual_review_required,
-        )
-
-        if building_record:
-            building_facts_records.append(building_record)
-
-        property_tax_record = self.build_property_tax_record_from_fields(
-            request=request,
-            fields=fields,
-            parcel_identifier=parcel_identifier,
-            address=address,
-            confidence=min(confidence, 0.55),
-            manual_review_required=parse_result.manual_review_required,
-        )
-
-        if property_tax_record:
-            property_tax_records.append(property_tax_record)
-
-        warnings = list(parse_result.warnings)
-
-        if parse_result.manual_review_required:
-            warnings.append(
-                make_tax_board_warning(
-                    warning_code="tax_board_manual_review_required",
-                    message=(
-                        "Tax Board connector found candidate data that requires "
-                        "manual review before platform-level reliance."
-                    ),
-                    severity="high",
-                )
-            )
-
-        return self.make_partial_result(
-            request=request,
-            source_result=source_result,
-            parcel_records=parcel_records,
-            tax_assessment_records=tax_assessment_records,
-            property_tax_records=property_tax_records,
-            building_facts_records=building_facts_records,
-            sale_history_records=sale_history_records,
-            owner_reference_records=owner_reference_records,
-            errors=list(parse_result.errors),
-            warnings=warnings,
-            explanation=(
-                "Morris County Tax Board data was parsed conservatively. "
-                "No listing-status claims were made."
-            ),
-            metadata={
-                "search_target": search_target.to_dict(),
-                "parse_result": parse_result.to_dict(),
-                "source_http_status_code": response.http_status_code,
-                "source_detected_format": response.detected_format,
-                "source_byte_length": response.byte_length,
-                "manual_review_required": parse_result.manual_review_required,
-            },
-        )
-
-    # ========================================================
-    # SECTION 09.06 - RECORD BUILDERS
-    # ========================================================
-
-    def build_parcel_identifier_from_fields(
-        self,
-        *,
-        request: PublicRecordSearchRequest,
-        fields: dict[str, Any],
-        search_target: TaxBoardSearchTarget,
-    ) -> ParcelIdentifier:
-        """
-        Build parcel identifier from normalized fields and request fallback.
-        """
-
-        block = fields.get("block") or request.block or search_target.block
-        lot = fields.get("lot") or request.lot or search_target.lot
-        qualifier = (
-            fields.get("qualifier")
-            or request.qualifier
-            or search_target.qualifier
-        )
-
-        parcel_id = None
-
-        if block and lot:
-            parcel_id = f"NJ-MORRIS-{block}-{lot}"
-
-            if qualifier:
-                parcel_id = f"{parcel_id}-{qualifier}"
-
-        return self.build_parcel_identifier(
-            parcel_id=parcel_id,
+        return TaxAssessmentRecord(
+            tax_year=tax_year,
             block=block,
             lot=lot,
             qualifier=qualifier,
-            state_code=NJ_MORRIS_TAX_BOARD_STATE,
-        )
-
-    def build_address_from_fields(
-        self,
-        *,
-        request: PublicRecordSearchRequest,
-        fields: dict[str, Any],
-        confidence: float = 0.50,
-    ) -> PublicRecordAddress:
-        """
-        Build public-record address from fields and request fallback.
-        """
-
-        raw_address = (
-            fields.get("address")
-            or request.street_address
-            or request.raw_query
-            or (
-                request.address.raw_address
-                if request.address
-                else None
-            )
-        )
-
-        municipality = (
-            fields.get("municipality")
-            or request.municipality
-            or (
-                request.address.municipality
-                if request.address
-                else None
-            )
-        )
-
-        postal_code = (
-            request.postal_code
-            or (
-                request.address.postal_code
-                if request.address
-                else None
-            )
-        )
-
-        return self.build_public_record_address(
-            raw_address=raw_address,
-            street_address=raw_address,
             municipality=municipality,
-            county=NJ_MORRIS_TAX_BOARD_COUNTY,
-            state=NJ_MORRIS_TAX_BOARD_STATE,
-            postal_code=postal_code,
-            confidence=confidence,
-        )
-
-    def build_tax_assessment_record_from_fields(
-        self,
-        *,
-        request: PublicRecordSearchRequest,
-        fields: dict[str, Any],
-        parcel_identifier: ParcelIdentifier,
-        address: PublicRecordAddress,
-        confidence: float,
-        manual_review_required: bool,
-    ) -> TaxAssessmentRecord:
-        """
-        Build tax assessment record from normalized Tax Board fields.
-        """
-
-        tax_year = normalize_tax_board_year(
-            fields.get("tax_year") or request.tax_year
-        )
-
-        land_value = normalize_tax_board_money(fields.get("land_value"))
-        improvement_value = normalize_tax_board_money(
-            fields.get("improvement_value")
-        )
-        total_assessed_value = normalize_tax_board_money(
-            fields.get("total_assessed_value")
-        )
-
-        if total_assessed_value is None and (
-            land_value is not None or improvement_value is not None
-        ):
-            total_assessed_value = (land_value or 0.0) + (
-                improvement_value or 0.0
-            )
-
-        record_id = make_public_record_id(
-            record_type="tax_assessment",
-            source_id=self.source_id,
-            address=address.normalized_address,
-            municipality=address.municipality,
-            county=address.county,
-            state=address.state,
-            block=parcel_identifier.block,
-            lot=parcel_identifier.lot,
-            tax_year=tax_year,
-        )
-
-        source_reference = self.build_source_record_reference(
-            record_type="tax_assessment",
-            display_label=(
-                f"Morris County Tax Board Assessment"
-                f"{f' {tax_year}' if tax_year else ''}"
-            ),
-            block=parcel_identifier.block,
-            lot=parcel_identifier.lot,
-            municipality=address.municipality,
-            county=address.county,
-            state=address.state,
-            record_date=str(tax_year) if tax_year else None,
-        )
-
-        return TaxAssessmentRecord(
-            record_id=record_id,
-            tax_year=tax_year,
-            parcel_identifier=parcel_identifier,
-            address=address,
-            owner_reference=fields.get("owner"),
-            property_class=fields.get(
-                "property_class",
-                PropertyClass.UNKNOWN.value,
-            ),
-            land_value=land_value,
-            improvement_value=improvement_value,
-            total_assessed_value=total_assessed_value,
-            source_context=self.get_source_context(
-                source_status=(
-                    PublicRecordStatus.MANUAL_REVIEW_REQUIRED.value
-                    if manual_review_required
-                    else PublicRecordStatus.PARTIAL.value
-                ),
-            ),
-            source_reference=source_reference,
-            confidence=confidence,
-            status=(
-                PublicRecordStatus.MANUAL_REVIEW_REQUIRED.value
-                if manual_review_required
-                else PublicRecordStatus.PARTIAL.value
-            ),
-            notes=[
-                "Assessment record parsed from Morris County Tax Board response.",
-                "Values are source-dependent and require attribution.",
-            ],
-            warnings=[
-                make_tax_board_warning(
-                    warning_code="assessment_public_record_not_market_value",
-                    message=(
-                        "Tax assessment is not the same as current market value "
-                        "or current listing price."
-                    ),
-                    severity="medium",
-                )
-            ],
-        )
-
-    def build_property_tax_record_from_fields(
-        self,
-        *,
-        request: PublicRecordSearchRequest,
-        fields: dict[str, Any],
-        parcel_identifier: ParcelIdentifier,
-        address: PublicRecordAddress,
-        confidence: float,
-        manual_review_required: bool,
-    ) -> PropertyTaxRecord | None:
-        """
-        Build property tax record if explicit tax fields exist.
-        """
-
-        tax_year = normalize_tax_board_year(
-            fields.get("tax_year") or request.tax_year
-        )
-
-        assessed_value = normalize_tax_board_money(
-            fields.get("total_assessed_value")
-        )
-
-        if assessed_value is None:
-            return None
-
-        record_id = make_public_record_id(
-            record_type="property_tax",
-            source_id=self.source_id,
-            address=address.normalized_address,
-            municipality=address.municipality,
-            county=address.county,
-            state=address.state,
-            block=parcel_identifier.block,
-            lot=parcel_identifier.lot,
-            tax_year=tax_year,
-        )
-
-        source_reference = self.build_source_record_reference(
-            record_type="property_tax",
-            display_label=(
-                f"Morris County Tax Board Property Tax Context"
-                f"{f' {tax_year}' if tax_year else ''}"
-            ),
-            block=parcel_identifier.block,
-            lot=parcel_identifier.lot,
-            municipality=address.municipality,
-            county=address.county,
-            state=address.state,
-            record_date=str(tax_year) if tax_year else None,
-        )
-
-        return PropertyTaxRecord(
-            record_id=record_id,
-            tax_year=tax_year,
-            parcel_identifier=parcel_identifier,
-            address=address,
-            assessed_value=assessed_value,
-            source_context=self.get_source_context(
-                source_status=(
-                    PublicRecordStatus.MANUAL_REVIEW_REQUIRED.value
-                    if manual_review_required
-                    else PublicRecordStatus.PARTIAL.value
-                ),
-            ),
-            source_reference=source_reference,
-            confidence=confidence,
-            status=(
-                PublicRecordStatus.MANUAL_REVIEW_REQUIRED.value
-                if manual_review_required
-                else PublicRecordStatus.PARTIAL.value
-            ),
-            notes=[
-                "Property tax context created from explicit assessment fields.",
-                "Annual tax amount requires explicit source support and is not inferred.",
-            ],
-            warnings=[
-                make_tax_board_warning(
-                    warning_code="tax_amount_not_inferred",
-                    message=(
-                        "Annual property tax amount was not inferred from assessment."
-                    ),
-                    severity="low",
-                )
-            ],
-        )
-
-    def build_sale_history_record_from_fields(
-        self,
-        *,
-        request: PublicRecordSearchRequest,
-        fields: dict[str, Any],
-        parcel_identifier: ParcelIdentifier,
-        address: PublicRecordAddress,
-        confidence: float,
-        manual_review_required: bool,
-    ) -> SaleHistoryRecord:
-        """
-        Build sale-history record from explicit Tax Board fields.
-        """
-
-        sale_date = fields.get("sale_date")
-        sale_price = normalize_tax_board_money(fields.get("sale_price"))
-
-        record_id = make_public_record_id(
-            record_type="sale_history",
-            source_id=self.source_id,
-            address=address.normalized_address,
-            municipality=address.municipality,
-            county=address.county,
-            state=address.state,
-            block=parcel_identifier.block,
-            lot=parcel_identifier.lot,
-        )
-
-        source_reference = self.build_source_record_reference(
-            record_type="sale_history",
-            display_label="Morris County Tax Board Sale History Reference",
-            block=parcel_identifier.block,
-            lot=parcel_identifier.lot,
-            municipality=address.municipality,
-            county=address.county,
-            state=address.state,
-            record_date=sale_date,
-        )
-
-        return SaleHistoryRecord(
-            record_id=record_id,
+            county="Morris",
+            state_code="NJ",
+            property_class=property_class,
+            land_assessment=land_assessment,
+            improvement_assessment=improvement_assessment,
+            total_assessment=total_assessment,
+            owner_reference=owner_reference,
             sale_date=sale_date,
             sale_price=sale_price,
-            sale_type=SaleType.UNKNOWN.value,
-            parcel_identifier=parcel_identifier,
-            address=address,
-            source_context=self.get_source_context(
-                source_status=(
-                    PublicRecordStatus.MANUAL_REVIEW_REQUIRED.value
-                    if manual_review_required
-                    else PublicRecordStatus.PARTIAL.value
-                ),
-            ),
-            source_reference=source_reference,
+            deed_book=deed_book,
+            deed_page=deed_page,
+            document_number=document_number,
+            source_status=status_value,
             confidence=confidence,
-            status=(
-                PublicRecordStatus.MANUAL_REVIEW_REQUIRED.value
-                if manual_review_required
-                else PublicRecordStatus.PARTIAL.value
-            ),
-            notes=[
-                "Sale-history reference parsed from Tax Board response where explicit.",
-            ],
-            warnings=[
-                make_tax_board_warning(
-                    warning_code="sale_type_not_inferred",
-                    message=(
-                        "Sale type was not inferred. Clerk/deed records are "
-                        "needed for stronger transaction classification."
-                    ),
-                    severity="medium",
-                )
-            ],
+            manual_review_required=bool(manual_review_reasons),
+            manual_review_reasons=manual_review_reasons,
+            source=source,
+            raw_payload=dict(record_payload),
         )
 
-    def build_owner_reference_record_from_fields(
+    def normalize_records(
+        self,
+        records: Sequence[Mapping[str, Any]],
+        *,
+        request: TaxBoardRequest,
+    ) -> list[TaxAssessmentRecord]:
+        normalized: list[TaxAssessmentRecord] = []
+
+        for index, record in enumerate(records):
+            source = TaxBoardSourceReference(
+                record_id=clean_value(
+                    record.get("record_id")
+                    or record.get("id")
+                    or f"tax-board-record-{index + 1}"
+                ),
+                field_path="tax_assessment_context",
+                confidence=0.0,
+                raw_payload_hash=stable_hash(record),
+                metadata={
+                    "record_index": index,
+                },
+            )
+            normalized.append(
+                self.normalize_record(
+                    record,
+                    request=request,
+                    source=source,
+                )
+            )
+
+        return normalized
+
+    def extract(self, flattened: Mapping[str, Any], field_name: str) -> Any:
+        return first_value(flattened, self.FIELD_CANDIDATES.get(field_name, []))
+
+    @staticmethod
+    def score_record(
+        *,
+        tax_year: str | None,
+        block: str | None,
+        lot: str | None,
+        municipality: str | None,
+        property_class: str | None,
+        land_assessment: float | None,
+        improvement_assessment: float | None,
+        total_assessment: float | None,
+        owner_reference: str | None,
+        sale_date: str | None,
+        sale_price: float | None,
+    ) -> float:
+        score = 0.0
+
+        if tax_year:
+            score += 0.10
+
+        if block:
+            score += 0.12
+
+        if lot:
+            score += 0.12
+
+        if municipality:
+            score += 0.10
+
+        if property_class:
+            score += 0.08
+
+        if land_assessment is not None:
+            score += 0.12
+
+        if improvement_assessment is not None:
+            score += 0.12
+
+        if total_assessment is not None:
+            score += 0.16
+
+        if owner_reference:
+            score += 0.05
+
+        if sale_date or sale_price is not None:
+            score += 0.03
+
+        return round(clamp_score(score), 6)
+
+    @staticmethod
+    def manual_review_reasons(
+        *,
+        tax_year: str | None,
+        block: str | None,
+        lot: str | None,
+        municipality: str | None,
+        total_assessment: float | None,
+        record_payload: Mapping[str, Any],
+    ) -> list[str]:
+        reasons: list[str] = []
+
+        if not tax_year:
+            reasons.append("tax_year_missing")
+
+        if not block:
+            reasons.append("block_missing")
+
+        if not lot:
+            reasons.append("lot_missing")
+
+        if not municipality:
+            reasons.append("municipality_missing")
+
+        if total_assessment is None:
+            reasons.append("total_assessment_missing")
+
+        if record_payload.get("conflict") or record_payload.get("conflicted"):
+            reasons.append("source_payload_marked_conflicted")
+
+        return reasons
+
+
+# ============================================================
+# SECTION 11 - RAW SOURCE CLIENT PLACEHOLDER
+# ============================================================
+
+class MorrisTaxBoardSourceClient:
+    """
+    Source client abstraction.
+
+    This class intentionally does not scrape or fabricate records.
+    Future approved integrations can inject a client with source-backed
+    data retrieval. The default client returns unavailable.
+    """
+
+    def search(
+        self,
+        request: TaxBoardRequest,
+    ) -> dict[str, Any]:
+        return {
+            "success": False,
+            "status": TaxBoardConnectorStatus.UNAVAILABLE.value,
+            "records": [],
+            "facts": {},
+            "warnings": [
+                "No live Morris County tax-board source client is configured."
+            ],
+            "errors": [],
+            "metadata": {
+                "client": self.__class__.__name__,
+                "generated_at": utc_now(),
+                "no_fabrication": True,
+            },
+        }
+
+
+# ============================================================
+# SECTION 12 - RESULT BUILDER
+# ============================================================
+
+class TaxBoardResultBuilder:
+    def build(
         self,
         *,
-        request: PublicRecordSearchRequest,
-        fields: dict[str, Any],
-        parcel_identifier: ParcelIdentifier,
-        address: PublicRecordAddress,
-        confidence: float,
-        manual_review_required: bool,
-    ) -> OwnerReferenceRecord:
-        """
-        Build owner reference record from explicit Tax Board field.
-        """
-
-        owner_reference = fields.get("owner") or request.owner_reference
-
-        record_id = make_public_record_id(
-            record_type="owner_reference",
-            source_id=self.source_id,
-            address=address.normalized_address,
-            municipality=address.municipality,
-            county=address.county,
-            state=address.state,
-            block=parcel_identifier.block,
-            lot=parcel_identifier.lot,
+        request: TaxBoardRequest,
+        records: Sequence[TaxAssessmentRecord],
+        warnings: Sequence[str] | None = None,
+        errors: Sequence[Mapping[str, Any]] | None = None,
+        raw_payload: Mapping[str, Any] | None = None,
+    ) -> TaxBoardConnectorResult:
+        warnings_list = list(warnings or [])
+        errors_list = [dict(error) for error in errors or []]
+        records_list = [record.to_dict() for record in records]
+        facts = self.build_facts(records)
+        sources = self.deduplicate_sources([record.source for record in records])
+        manual_review_items = self.build_manual_review_items(request, records)
+        unavailable_fields = self.build_unavailable_fields(facts)
+        unsupported_claims = self.build_unsupported_claims()
+        completeness_score = self.score_completeness(facts)
+        source_coverage_score = self.score_source_coverage(facts, sources)
+        confidence = self.score_confidence(
+            records=records,
+            completeness_score=completeness_score,
+            source_coverage_score=source_coverage_score,
+            manual_review_items=manual_review_items,
+            errors=errors_list,
         )
 
-        source_reference = self.build_source_record_reference(
-            record_type="owner_reference",
-            display_label="Morris County Tax Board Owner Reference",
-            block=parcel_identifier.block,
-            lot=parcel_identifier.lot,
-            municipality=address.municipality,
-            county=address.county,
-            state=address.state,
-        )
+        if errors_list and not records:
+            status_value = TaxBoardConnectorStatus.ERROR.value
+        elif records and manual_review_items:
+            status_value = TaxBoardConnectorStatus.PARTIAL.value
+        elif records:
+            status_value = TaxBoardConnectorStatus.SUCCESS.value
+        else:
+            status_value = TaxBoardConnectorStatus.PARTIAL.value
 
-        return OwnerReferenceRecord(
-            record_id=record_id,
-            owner_reference=owner_reference,
-            parcel_identifier=parcel_identifier,
-            address=address,
-            source_context=self.get_source_context(
-                source_status=(
-                    PublicRecordStatus.MANUAL_REVIEW_REQUIRED.value
-                    if manual_review_required
-                    else PublicRecordStatus.PARTIAL.value
-                ),
-            ),
-            source_reference=source_reference,
+        success = status_value in {
+            TaxBoardConnectorStatus.SUCCESS.value,
+            TaxBoardConnectorStatus.PARTIAL.value,
+        }
+
+        if not records:
+            warnings_list.append(
+                "No source-backed Morris County tax assessment records were returned."
+            )
+
+        return TaxBoardConnectorResult(
+            success=success,
+            status=status_value,
+            query_mode=request.query_mode,
+            request=request,
+            records=records_list,
+            facts=facts,
+            sources=sources,
+            manual_review_items=manual_review_items,
+            unavailable_fields=unavailable_fields,
+            unsupported_claims=unsupported_claims,
+            warnings=list(dict.fromkeys([warning for warning in warnings_list if warning])),
+            errors=errors_list,
             confidence=confidence,
-            status=(
-                PublicRecordStatus.MANUAL_REVIEW_REQUIRED.value
-                if manual_review_required
-                else PublicRecordStatus.PARTIAL.value
-            ),
-            notes=[
-                "Owner field is treated as a public-record reference, not a legal conclusion.",
-            ],
-            warnings=[
-                make_tax_board_warning(
-                    warning_code="owner_reference_requires_review",
-                    message=(
-                        "Owner data from public records should be treated as "
-                        "a source-backed reference and may require review."
-                    ),
-                    severity="medium",
-                )
-            ],
+            completeness_score=completeness_score,
+            source_coverage_score=source_coverage_score,
+            metadata={
+                "connector": CONNECTOR_NAME,
+                "version": CONNECTOR_VERSION,
+                "phase": CONNECTOR_PHASE,
+                "generated_at": utc_now(),
+                "record_count": len(records),
+                "raw_payload_hash": stable_hash(raw_payload or {}),
+            },
         )
 
-    def build_building_facts_record_from_fields(
+    def build_facts(
         self,
-        *,
-        request: PublicRecordSearchRequest,
-        fields: dict[str, Any],
-        parcel_identifier: ParcelIdentifier,
-        address: PublicRecordAddress,
-        confidence: float,
-        manual_review_required: bool,
-    ) -> BuildingFactsRecord | None:
-        """
-        Build building facts record if explicit fields exist.
-        """
+        records: Sequence[TaxAssessmentRecord],
+    ) -> dict[str, Any]:
+        best = self.select_best_record(records)
 
-        year_built = normalize_tax_board_year(fields.get("year_built"))
-        building_area_sqft = normalize_tax_board_area(
-            fields.get("building_area_sqft")
-        )
+        if best is None:
+            return self.empty_facts()
 
-        if year_built is None and building_area_sqft is None:
+        return {
+            "parcel_identity": {
+                "block": best.block,
+                "lot": best.lot,
+                "qualifier": best.qualifier,
+                "municipality": best.municipality,
+                "county": best.county,
+                "state_code": best.state_code,
+                "property_class": best.property_class,
+                "source_status": best.source_status,
+                "confidence": best.confidence,
+            },
+            "tax_assessment_context": {
+                "tax_year": best.tax_year,
+                "land_assessment": best.land_assessment,
+                "improvement_assessment": best.improvement_assessment,
+                "total_assessment": best.total_assessment,
+                "property_class": best.property_class,
+                "assessment_source_note": (
+                    "Tax assessment is public-record context and is not current market value."
+                ),
+                "source_status": best.source_status,
+                "confidence": best.confidence,
+            },
+            "property_tax_context": {
+                "tax_year": best.tax_year,
+                "tax_amount": None,
+                "tax_rate": None,
+                "estimated_annual_tax": None,
+                "source_status": TaxBoardFactStatus.UNAVAILABLE.value,
+                "confidence": 0.0,
+            },
+            "owner_references": (
+                [
+                    {
+                        "owner_name": best.owner_reference,
+                        "mailing_address": None,
+                        "owner_source_note": (
+                            "Owner reference is public-record context and may require manual review."
+                        ),
+                        "source_status": best.source_status,
+                        "confidence": min(best.confidence, 0.62),
+                    }
+                ]
+                if best.owner_reference
+                else []
+            ),
+            "sale_history_references": (
+                [
+                    {
+                        "sale_date": best.sale_date,
+                        "sale_price": best.sale_price,
+                        "deed_book": best.deed_book,
+                        "deed_page": best.deed_page,
+                        "document_number": best.document_number,
+                        "source_status": best.source_status,
+                        "confidence": min(best.confidence, 0.60),
+                    }
+                ]
+                if best.sale_date or best.sale_price is not None
+                else []
+            ),
+        }
+
+    @staticmethod
+    def empty_facts() -> dict[str, Any]:
+        return {
+            "parcel_identity": {
+                "block": None,
+                "lot": None,
+                "qualifier": None,
+                "municipality": None,
+                "county": "Morris",
+                "state_code": "NJ",
+                "property_class": None,
+                "source_status": TaxBoardFactStatus.UNAVAILABLE.value,
+                "confidence": 0.0,
+            },
+            "tax_assessment_context": {
+                "tax_year": None,
+                "land_assessment": None,
+                "improvement_assessment": None,
+                "total_assessment": None,
+                "property_class": None,
+                "assessment_source_note": (
+                    "Tax assessment is public-record context and is not current market value."
+                ),
+                "source_status": TaxBoardFactStatus.UNAVAILABLE.value,
+                "confidence": 0.0,
+            },
+            "property_tax_context": {
+                "tax_year": None,
+                "tax_amount": None,
+                "tax_rate": None,
+                "estimated_annual_tax": None,
+                "source_status": TaxBoardFactStatus.UNAVAILABLE.value,
+                "confidence": 0.0,
+            },
+            "owner_references": [],
+            "sale_history_references": [],
+        }
+
+    @staticmethod
+    def select_best_record(
+        records: Sequence[TaxAssessmentRecord],
+    ) -> TaxAssessmentRecord | None:
+        if not records:
             return None
 
-        record_id = make_public_record_id(
-            record_type="building_facts",
-            source_id=self.source_id,
-            address=address.normalized_address,
-            municipality=address.municipality,
-            county=address.county,
-            state=address.state,
-            block=parcel_identifier.block,
-            lot=parcel_identifier.lot,
-        )
+        return sorted(
+            records,
+            key=lambda item: (
+                item.confidence,
+                int(item.tax_year or 0) if item.tax_year else 0,
+            ),
+            reverse=True,
+        )[0]
 
-        source_reference = self.build_source_record_reference(
-            record_type="building_facts",
-            display_label="Morris County Tax Board Building Facts Reference",
-            block=parcel_identifier.block,
-            lot=parcel_identifier.lot,
-            municipality=address.municipality,
-            county=address.county,
-            state=address.state,
-        )
+    @staticmethod
+    def deduplicate_sources(
+        sources: Sequence[TaxBoardSourceReference],
+    ) -> list[TaxBoardSourceReference]:
+        seen: set[str] = set()
+        output: list[TaxBoardSourceReference] = []
 
-        return BuildingFactsRecord(
-            record_id=record_id,
-            parcel_identifier=parcel_identifier,
-            address=address,
-            property_class=fields.get(
-                "property_class",
-                PropertyClass.UNKNOWN.value,
-            ),
-            year_built=year_built,
-            building_area_sqft=building_area_sqft,
-            source_context=self.get_source_context(
-                source_status=(
-                    PublicRecordStatus.MANUAL_REVIEW_REQUIRED.value
-                    if manual_review_required
-                    else PublicRecordStatus.PARTIAL.value
-                ),
-            ),
-            source_reference=source_reference,
-            confidence=confidence,
-            status=(
-                PublicRecordStatus.MANUAL_REVIEW_REQUIRED.value
-                if manual_review_required
-                else PublicRecordStatus.PARTIAL.value
-            ),
-            notes=[
-                "Building facts parsed only from explicit source fields.",
-            ],
-            warnings=[
-                make_tax_board_warning(
-                    warning_code="building_facts_are_source_dependent",
-                    message=(
-                        "Building facts should be cross-checked with GIS, MOD-IV, "
-                        "or municipal records where available."
-                    ),
-                    severity="medium",
+        for source in sources:
+            key = stable_hash(source.to_dict())
+
+            if key in seen:
+                continue
+
+            seen.add(key)
+            output.append(source)
+
+        return output
+
+    @staticmethod
+    def build_manual_review_items(
+        request: TaxBoardRequest,
+        records: Sequence[TaxAssessmentRecord],
+    ) -> list[TaxBoardManualReviewItem]:
+        items: list[TaxBoardManualReviewItem] = []
+
+        if request.query_mode == TaxBoardQueryMode.UNKNOWN.value:
+            items.append(
+                TaxBoardManualReviewItem(
+                    code="unknown_tax_board_query_mode",
+                    message="Tax-board query mode could not be determined.",
+                    field_path="request.query_mode",
+                    required_action="Provide address, block/lot, parcel ID, or owner reference.",
                 )
-            ],
-        )
+            )
 
-    # ========================================================
-    # SECTION 09.07 - DIAGNOSTICS
-    # ========================================================
+        if request.county != "Morris" or request.state_code != "NJ":
+            items.append(
+                TaxBoardManualReviewItem(
+                    code="outside_morris_county_scope",
+                    message="Morris County tax-board connector received an out-of-scope request.",
+                    field_path="request.county",
+                    required_action="Route non-Morris requests to the proper county/state connector.",
+                )
+            )
 
-    def diagnostics(
-        self,
-    ) -> dict[str, Any]:
-        """
-        Return Morris County Tax Board connector diagnostics.
-        """
+        if not records:
+            items.append(
+                TaxBoardManualReviewItem(
+                    code="no_source_backed_tax_records",
+                    message="No source-backed tax assessment records were returned.",
+                    field_path="records",
+                    required_action="Connect approved tax-board source client or manually verify public record.",
+                )
+            )
 
-        base = super().diagnostics()
+        for record in records:
+            for reason in record.manual_review_reasons:
+                items.append(
+                    TaxBoardManualReviewItem(
+                        code=reason,
+                        message=f"Tax assessment record requires review: {reason}.",
+                        field_path="tax_assessment_context",
+                        required_action="Verify tax-board source record before relying on this field.",
+                        metadata={
+                            "record_hash": stable_hash(record.to_dict()),
+                        },
+                    )
+                )
 
-        base.update(
+        return items
+
+    @staticmethod
+    def build_unavailable_fields(
+        facts: Mapping[str, Any],
+    ) -> list[dict[str, Any]]:
+        unavailable: list[dict[str, Any]] = []
+
+        for section_name, section_payload in facts.items():
+            if isinstance(section_payload, Mapping):
+                for field_name, value in section_payload.items():
+                    if field_name in {"source_status", "confidence", "assessment_source_note"}:
+                        continue
+
+                    if value in (None, "", [], {}):
+                        unavailable.append(
+                            {
+                                "field_name": field_name,
+                                "field_path": f"{section_name}.{field_name}",
+                                "reason": (
+                                    f"{section_name}.{field_name} is unavailable from current Morris County tax-board source data."
+                                ),
+                                "required_source": "morris_county_tax_board_public_record",
+                                "can_public_records_support": True,
+                                "manual_review_required": False,
+                            }
+                        )
+
+            if isinstance(section_payload, list) and not section_payload:
+                unavailable.append(
+                    {
+                        "field_name": section_name,
+                        "field_path": section_name,
+                        "reason": (
+                            f"{section_name} is unavailable from current Morris County tax-board source data."
+                        ),
+                        "required_source": "morris_county_tax_board_public_record",
+                        "can_public_records_support": True,
+                        "manual_review_required": False,
+                    }
+                )
+
+        return unavailable
+
+    @staticmethod
+    def build_unsupported_claims() -> list[dict[str, Any]]:
+        return [
             {
-                "morris_tax_board": {
-                    "source_url": NJ_MORRIS_TAX_BOARD_SOURCE_URL,
-                    "jurisdiction": NJ_MORRIS_TAX_BOARD_JURISDICTION,
-                    "state": NJ_MORRIS_TAX_BOARD_STATE,
-                    "county": NJ_MORRIS_TAX_BOARD_COUNTY,
-                    "supported_claims": list(
-                        NJ_MORRIS_TAX_BOARD_SUPPORTED_CLAIMS
-                    ),
-                    "unsupported_claims": list(
-                        NJ_MORRIS_TAX_BOARD_UNSUPPORTED_CLAIMS
-                    ),
-                    "supported_query_modes": list(
-                        NJ_MORRIS_TAX_BOARD_SUPPORTED_QUERY_MODES
-                    ),
-                    "governance": NJ_MORRIS_TAX_BOARD_GOVERNANCE.copy(),
-                    "field_alias_count": len(TAX_BOARD_FIELD_ALIASES),
-                    "generated_at": utc_now(),
-                }
+                "claim": claim,
+                "status": TaxBoardFactStatus.UNSUPPORTED.value,
+                "reason": (
+                    "Morris County tax-board assessment data cannot prove this claim."
+                ),
+                "required_source": (
+                    "valuation_engine_and_comparable_sales"
+                    if "market_value" in claim or "appraisal" in claim
+                    else "authorized_listing_feed_or_legal_source"
+                ),
             }
+            for claim in UNSUPPORTED_CLAIMS
+        ]
+
+    @staticmethod
+    def score_completeness(facts: Mapping[str, Any]) -> float:
+        values: list[Any] = []
+
+        for section_payload in facts.values():
+            if isinstance(section_payload, Mapping):
+                for key, value in section_payload.items():
+                    if key in {"source_status", "confidence", "assessment_source_note"}:
+                        continue
+                    values.append(value)
+            elif isinstance(section_payload, list):
+                values.append(section_payload)
+
+        if not values:
+            return 0.0
+
+        present = [
+            value
+            for value in values
+            if value not in (None, "", [], {})
+        ]
+
+        return round(clamp_score(len(present) / len(values)), 6)
+
+    @staticmethod
+    def score_source_coverage(
+        facts: Mapping[str, Any],
+        sources: Sequence[TaxBoardSourceReference],
+    ) -> float:
+        if not sources:
+            return 0.0
+
+        source_scores = [
+            source.confidence
+            for source in sources
+        ]
+
+        return round(clamp_score(sum(source_scores) / len(source_scores)), 6)
+
+    @staticmethod
+    def score_confidence(
+        *,
+        records: Sequence[TaxAssessmentRecord],
+        completeness_score: float,
+        source_coverage_score: float,
+        manual_review_items: Sequence[TaxBoardManualReviewItem],
+        errors: Sequence[Mapping[str, Any]],
+    ) -> float:
+        record_score = 0.0
+
+        if records:
+            record_score = sum(record.confidence for record in records) / len(records)
+
+        review_penalty = min(len(manual_review_items) * 0.04, 0.35)
+        error_penalty = min(len(errors) * 0.08, 0.40)
+
+        score = (
+            record_score * 0.45
+            + completeness_score * 0.30
+            + source_coverage_score * 0.25
+            - review_penalty
+            - error_penalty
         )
 
-        return base
+        return round(clamp_score(score), 6)
 
 
 # ============================================================
-# SECTION 10 - FACTORY FUNCTIONS
+# SECTION 13 - ENTERPRISE CONNECTOR
 # ============================================================
 
-def create_nj_morris_tax_board_connector() -> NJMorrisTaxBoardConnector:
-    """
-    Create Morris County Tax Board connector.
-    """
+class NJMorrisTaxBoardConnector:
+    def __init__(
+        self,
+        *,
+        source_client: MorrisTaxBoardSourceClient | None = None,
+        normalizer: TaxBoardRequestNormalizer | None = None,
+        record_normalizer: TaxBoardRecordNormalizer | None = None,
+        result_builder: TaxBoardResultBuilder | None = None,
+    ) -> None:
+        self.source_client = source_client or MorrisTaxBoardSourceClient()
+        self.normalizer = normalizer or TaxBoardRequestNormalizer()
+        self.record_normalizer = record_normalizer or TaxBoardRecordNormalizer()
+        self.result_builder = result_builder or TaxBoardResultBuilder()
 
+    def collect(
+        self,
+        request: TaxBoardRequest | Mapping[str, Any] | str | None = None,
+        **kwargs: Any,
+    ) -> dict[str, Any]:
+        normalized_request = self.normalizer.normalize(request, **kwargs)
+
+        if normalized_request.state_code != "NJ" or normalized_request.county != "Morris":
+            result = self.result_builder.build(
+                request=normalized_request,
+                records=[],
+                warnings=[
+                    "Request is outside Morris County, NJ scope for this connector."
+                ],
+                errors=[],
+                raw_payload={},
+            )
+            result.status = TaxBoardConnectorStatus.SKIPPED.value
+            result.success = True
+
+            return result.to_dict()
+
+        try:
+            raw_payload = self.source_client.search(normalized_request)
+            raw_records = self.extract_raw_records(raw_payload)
+
+            normalized_records = self.record_normalizer.normalize_records(
+                raw_records,
+                request=normalized_request,
+            )
+
+            warnings = list(raw_payload.get("warnings") or [])
+            errors = list(raw_payload.get("errors") or [])
+
+            return self.result_builder.build(
+                request=normalized_request,
+                records=normalized_records,
+                warnings=warnings,
+                errors=errors,
+                raw_payload=raw_payload,
+            ).to_dict()
+
+        except Exception as exc:
+            return self.result_builder.build(
+                request=normalized_request,
+                records=[],
+                warnings=[],
+                errors=[
+                    {
+                        "code": "tax_board_connector_error",
+                        "message": f"{type(exc).__name__}: {exc}",
+                        "traceback": traceback.format_exc(),
+                    }
+                ],
+                raw_payload={},
+            ).to_dict()
+
+    def search(
+        self,
+        request: TaxBoardRequest | Mapping[str, Any] | str | None = None,
+        **kwargs: Any,
+    ) -> dict[str, Any]:
+        return self.collect(request, **kwargs)
+
+    def lookup(
+        self,
+        request: TaxBoardRequest | Mapping[str, Any] | str | None = None,
+        **kwargs: Any,
+    ) -> dict[str, Any]:
+        return self.collect(request, **kwargs)
+
+    def lookup_property(
+        self,
+        request: TaxBoardRequest | Mapping[str, Any] | str | None = None,
+        **kwargs: Any,
+    ) -> dict[str, Any]:
+        return self.collect(request, **kwargs)
+
+    def search_public_records(
+        self,
+        request: TaxBoardRequest | Mapping[str, Any] | str | None = None,
+        **kwargs: Any,
+    ) -> dict[str, Any]:
+        return self.collect(request, **kwargs)
+
+    def run(
+        self,
+        request: TaxBoardRequest | Mapping[str, Any] | str | None = None,
+        **kwargs: Any,
+    ) -> dict[str, Any]:
+        return self.collect(request, **kwargs)
+
+    def execute(
+        self,
+        request: TaxBoardRequest | Mapping[str, Any] | str | None = None,
+        **kwargs: Any,
+    ) -> dict[str, Any]:
+        return self.collect(request, **kwargs)
+
+    @staticmethod
+    def extract_raw_records(raw_payload: Mapping[str, Any]) -> list[dict[str, Any]]:
+        records = raw_payload.get("records")
+
+        if isinstance(records, list):
+            return [
+                dict(record)
+                for record in records
+                if isinstance(record, Mapping)
+            ]
+
+        data = raw_payload.get("data")
+
+        if isinstance(data, list):
+            return [
+                dict(record)
+                for record in data
+                if isinstance(record, Mapping)
+            ]
+
+        if isinstance(data, Mapping):
+            return [dict(data)]
+
+        facts = raw_payload.get("facts")
+
+        if isinstance(facts, Mapping):
+            return [dict(facts)]
+
+        return []
+
+
+# Backward-compatible aliases expected by the orchestration engine.
+MorrisTaxBoardConnector = NJMorrisTaxBoardConnector
+TaxBoardConnector = NJMorrisTaxBoardConnector
+PublicRecordConnector = NJMorrisTaxBoardConnector
+
+
+# ============================================================
+# SECTION 14 - CONVENIENCE API
+# ============================================================
+
+_default_connector = NJMorrisTaxBoardConnector()
+
+
+def get_connector() -> NJMorrisTaxBoardConnector:
     return NJMorrisTaxBoardConnector()
 
 
-def get_nj_morris_tax_board_connector_metadata() -> dict[str, Any]:
-    """
-    Return connector metadata.
-    """
-
-    connector = create_nj_morris_tax_board_connector()
-
-    return connector.get_metadata().to_dict()
+def collect_tax_board_records(
+    request: TaxBoardRequest | Mapping[str, Any] | str | None = None,
+    **kwargs: Any,
+) -> dict[str, Any]:
+    return _default_connector.collect(request, **kwargs)
 
 
-def get_nj_morris_tax_board_connector_health() -> dict[str, Any]:
-    """
-    Return connector health.
-    """
-
-    connector = create_nj_morris_tax_board_connector()
-
-    health = connector.health()
-
-    health.update(
-        {
-            "official_source": True,
-            "source_url": NJ_MORRIS_TAX_BOARD_SOURCE_URL,
-            "jurisdiction": NJ_MORRIS_TAX_BOARD_JURISDICTION,
-            "mock_records_allowed": False,
-            "active_listing_status_allowed": False,
-            "generated_at": utc_now(),
-        }
-    )
-
-    return health
+def search_tax_board_records(
+    request: TaxBoardRequest | Mapping[str, Any] | str | None = None,
+    **kwargs: Any,
+) -> dict[str, Any]:
+    return _default_connector.search(request, **kwargs)
 
 
-def get_nj_morris_tax_board_connector_diagnostics() -> dict[str, Any]:
-    """
-    Return connector diagnostics.
-    """
-
-    connector = create_nj_morris_tax_board_connector()
-
-    return connector.diagnostics()
+def lookup_tax_board_property(
+    request: TaxBoardRequest | Mapping[str, Any] | str | None = None,
+    **kwargs: Any,
+) -> dict[str, Any]:
+    return _default_connector.lookup_property(request, **kwargs)
 
 
-def validate_nj_morris_tax_board_connector_governance() -> dict[str, Any]:
-    """
-    Validate connector governance.
-    """
+# ============================================================
+# SECTION 15 - HEALTH / READINESS / DIAGNOSTICS
+# ============================================================
 
+def validate_tax_board_connector_governance() -> dict[str, Any]:
     issues: list[dict[str, Any]] = []
 
-    for key in [
-        "mock_records_allowed",
-        "fabricated_records_allowed",
-        "fabricated_values_allowed",
-        "fabricated_owners_allowed",
-        "fabricated_sale_history_allowed",
-        "active_listing_status_allowed",
-        "under_contract_status_allowed",
-    ]:
-        if NJ_MORRIS_TAX_BOARD_GOVERNANCE.get(key):
+    false_keys = [
+        "fabricated_tax_records_allowed",
+        "fabricated_assessment_values_allowed",
+        "fabricated_owner_references_allowed",
+        "fabricated_sale_references_allowed",
+        "fabricated_market_value_allowed",
+        "assessment_as_market_value_allowed",
+        "assessment_as_listing_price_allowed",
+        "assessment_as_appraisal_allowed",
+    ]
+
+    for key in false_keys:
+        if TAX_BOARD_CONNECTOR_GOVERNANCE.get(key):
             issues.append(
                 {
-                    "issue_code": f"{key}_enabled",
+                    "issue_code": f"{key}_must_remain_false",
                     "severity": "critical",
                     "message": f"{key} must remain False.",
                 }
             )
 
-    for key in [
-        "official_source",
+    true_keys = [
         "source_attribution_required",
-        "manual_review_for_ambiguous_matches",
-        "public_records_only",
-        "listing_feed_required_for_listing_status",
-    ]:
-        if not NJ_MORRIS_TAX_BOARD_GOVERNANCE.get(key):
+        "manual_review_for_ambiguous_records",
+        "missing_fields_must_remain_unavailable",
+        "partial_source_backed_results_allowed",
+    ]
+
+    for key in true_keys:
+        if not TAX_BOARD_CONNECTOR_GOVERNANCE.get(key):
             issues.append(
                 {
-                    "issue_code": f"{key}_disabled",
+                    "issue_code": f"{key}_must_remain_true",
                     "severity": "critical",
                     "message": f"{key} must remain True.",
                 }
@@ -1883,78 +1754,2045 @@ def validate_nj_morris_tax_board_connector_governance() -> dict[str, Any]:
     }
 
 
-def build_nj_morris_tax_board_manual_lookup_payload(
-    request: PublicRecordSearchRequest,
-) -> dict[str, Any]:
-    """
-    Build manual lookup payload for operations review.
-    """
+def get_tax_board_connector_metadata() -> dict[str, Any]:
+    return {
+        "name": CONNECTOR_NAME,
+        "version": CONNECTOR_VERSION,
+        "phase": CONNECTOR_PHASE,
+        "status": CONNECTOR_STATUS,
+        "connector_key": CONNECTOR_KEY,
+        "source_type": CONNECTOR_SOURCE_TYPE,
+        "authority": CONNECTOR_AUTHORITY,
+        "jurisdiction": CONNECTOR_JURISDICTION,
+        "release_channel": CONNECTOR_RELEASE_CHANNEL,
+        "generated_at": utc_now(),
+    }
 
-    connector = create_nj_morris_tax_board_connector()
 
-    target = connector.build_search_target(request)
+def get_tax_board_connector_health() -> dict[str, Any]:
+    governance = validate_tax_board_connector_governance()
+    sample = collect_tax_board_records(
+        {
+            "raw_query": "43 Wetmore Ave, Morristown, NJ 07960",
+            "municipality": "Morristown",
+            "county": "Morris",
+            "state_code": "NJ",
+        }
+    )
 
     return {
-        "connector_id": connector.connector_id,
-        "source_id": connector.source_id,
-        "source_name": connector.source_name,
-        "source_url": connector.source_url,
-        "request": request.to_dict(),
-        "search_target": target.to_dict(),
-        "manual_steps": [
-            "Open the official Morris County Tax Board search URL.",
-            "Use the request address, owner reference, or block/lot.",
-            "Verify municipality when available.",
-            "Record only explicit source-backed values.",
-            "Do not infer listing status from this source.",
-            "Mark ambiguous matches for manual review.",
+        "name": CONNECTOR_NAME,
+        "version": CONNECTOR_VERSION,
+        "phase": CONNECTOR_PHASE,
+        "status": CONNECTOR_STATUS,
+        "governance_valid": governance["valid"],
+        "governance_issue_count": governance["issue_count"],
+        "sample_status": sample.get("status"),
+        "sample_success": sample.get("success"),
+        "sample_confidence": sample.get("confidence"),
+        "source_client": _default_connector.source_client.__class__.__name__,
+        "live_source_client_configured": not isinstance(
+            _default_connector.source_client,
+            MorrisTaxBoardSourceClient,
+        ),
+        "fabricated_tax_records_allowed": False,
+        "assessment_as_market_value_allowed": False,
+        "generated_at": utc_now(),
+    }
+
+
+def get_tax_board_connector_readiness() -> dict[str, Any]:
+    health = get_tax_board_connector_health()
+
+    required = {
+        "governance_valid": health["governance_valid"],
+        "connector_importable": True,
+    }
+
+    optional = {
+        "live_source_client_configured": health["live_source_client_configured"],
+    }
+
+    return {
+        "ready": all(required.values()),
+        "required": required,
+        "optional": optional,
+        "missing_required": [
+            key for key, value in required.items() if not value
         ],
-        "unsupported_claims": list(NJ_MORRIS_TAX_BOARD_UNSUPPORTED_CLAIMS),
+        "missing_optional": [
+            key for key, value in optional.items() if not value
+        ],
+        "next_files": [
+            "app/public_records/connectors/nj_morris_gis_connector.py",
+            "app/property_intelligence/valuation_engine.py",
+            "app/static/js/dashboard.js",
+        ],
+        "generated_at": utc_now(),
+    }
+
+
+def get_tax_board_connector_diagnostics() -> dict[str, Any]:
+    return {
+        "metadata": get_tax_board_connector_metadata(),
+        "health": get_tax_board_connector_health(),
+        "readiness": get_tax_board_connector_readiness(),
+        "governance": TAX_BOARD_CONNECTOR_GOVERNANCE.copy(),
+        "governance_validation": validate_tax_board_connector_governance(),
+        "supported_fields": SUPPORTED_FIELDS,
+        "unsupported_claims": UNSUPPORTED_CLAIMS,
+        "standard_limitations": STANDARD_LIMITATIONS,
+        "municipality_hint_count": len(MORRIS_COUNTY_MUNICIPALITIES),
+        "exports": __all__,
         "generated_at": utc_now(),
     }
 
 
 # ============================================================
-# SECTION 11 - PUBLIC EXPORTS
+# SECTION 16 - PUBLIC EXPORTS
 # ============================================================
 
 __all__ = [
-    "NJ_MORRIS_TAX_BOARD_CONNECTOR_NAME",
-    "NJ_MORRIS_TAX_BOARD_CONNECTOR_VERSION",
-    "NJ_MORRIS_TAX_BOARD_CONNECTOR_PHASE",
-    "NJ_MORRIS_TAX_BOARD_CONNECTOR_STATUS",
-    "NJ_MORRIS_TAX_BOARD_SOURCE_ID",
-    "NJ_MORRIS_TAX_BOARD_SOURCE_NAME",
-    "NJ_MORRIS_TAX_BOARD_SOURCE_URL",
-    "NJ_MORRIS_TAX_BOARD_JURISDICTION",
-    "NJ_MORRIS_TAX_BOARD_STATE",
-    "NJ_MORRIS_TAX_BOARD_COUNTY",
-    "NJ_MORRIS_TAX_BOARD_GOVERNANCE",
-    "NJ_MORRIS_TAX_BOARD_SUPPORTED_CLAIMS",
-    "NJ_MORRIS_TAX_BOARD_UNSUPPORTED_CLAIMS",
-    "NJ_MORRIS_TAX_BOARD_SUPPORTED_QUERY_MODES",
-    "TAX_BOARD_FIELD_ALIASES",
-    "TaxBoardSearchTarget",
-    "TaxBoardParseResult",
+    "CONNECTOR_NAME",
+    "CONNECTOR_VERSION",
+    "CONNECTOR_PHASE",
+    "CONNECTOR_STATUS",
+    "CONNECTOR_KEY",
+    "CONNECTOR_SOURCE_TYPE",
+    "CONNECTOR_AUTHORITY",
+    "CONNECTOR_JURISDICTION",
+    "CONNECTOR_RELEASE_CHANNEL",
+    "TAX_BOARD_CONNECTOR_GOVERNANCE",
+    "SUPPORTED_FIELDS",
+    "UNSUPPORTED_CLAIMS",
+    "STANDARD_LIMITATIONS",
+    "MORRIS_COUNTY_MUNICIPALITIES",
+    "TaxBoardConnectorStatus",
+    "TaxBoardFactStatus",
+    "TaxBoardQueryMode",
+    "ManualReviewSeverity",
+    "TaxBoardRequest",
+    "TaxBoardSourceReference",
+    "TaxAssessmentRecord",
+    "TaxBoardManualReviewItem",
+    "TaxBoardConnectorResult",
+    "TaxBoardRequestNormalizer",
+    "TaxBoardRecordNormalizer",
+    "MorrisTaxBoardSourceClient",
+    "TaxBoardResultBuilder",
     "NJMorrisTaxBoardConnector",
-    "clean_tax_board_text",
-    "normalize_tax_board_money",
-    "normalize_tax_board_year",
-    "normalize_tax_board_area",
-    "make_tax_board_warning",
-    "make_tax_board_error",
-    "alias_matches",
-    "resolve_tax_board_field",
-    "extract_label_value_pairs_from_text",
-    "extract_candidate_assessment_rows",
-    "normalize_tax_board_fields",
-    "build_tax_board_confidence",
-    "create_nj_morris_tax_board_connector",
-    "get_nj_morris_tax_board_connector_metadata",
-    "get_nj_morris_tax_board_connector_health",
-    "get_nj_morris_tax_board_connector_diagnostics",
-    "validate_nj_morris_tax_board_connector_governance",
-    "build_nj_morris_tax_board_manual_lookup_payload",
+    "MorrisTaxBoardConnector",
+    "TaxBoardConnector",
+    "PublicRecordConnector",
+    "get_connector",
+    "collect_tax_board_records",
+    "search_tax_board_records",
+    "lookup_tax_board_property",
+    "validate_tax_board_connector_governance",
+    "get_tax_board_connector_metadata",
+    "get_tax_board_connector_health",
+    "get_tax_board_connector_readiness",
+    "get_tax_board_connector_diagnostics",
+]
+
+
+# ============================================================
+# END OF FILE
+# ============================================================
+# AUSSEM1
+# PHASE 2.47 PART 1.00
+# ENTERPRISE MORRIS COUNTY TAX BOARD CONNECTOR
+# FILE: app/public_records/connectors/nj_morris_tax_board_connector.py
+# PURPOSE:
+# Strengthen Morris County tax-board style public-record extraction
+# for source-governed property intelligence workflows.
+#
+# THIS CONNECTOR FOCUSES ON:
+# - tax year
+# - block
+# - lot
+# - qualifier
+# - municipality
+# - property class
+# - land assessment
+# - improvement assessment
+# - total assessment
+# - owner reference if source-backed
+# - sale reference if source-backed
+# - source attribution
+# - manual-review flags
+#
+# CORE GOVERNANCE:
+# - No fabricated tax records.
+# - No fabricated owner facts.
+# - No fabricated sale history.
+# - No fabricated assessment values.
+# - No live scraping unless a future approved source client is connected.
+# - Assessment is not market value.
+# - Assessment is not listing price.
+# - Assessment is not an appraisal.
+# - Missing source-backed fields remain unavailable.
+#
+# AUTHOR:
+# Ryan Schuren
+#
+# ASSISTANT:
+# Alfred
+#
+# STATUS:
+# ENTERPRISE MORRIS COUNTY TAX BOARD CONNECTOR ACTIVE
+# ============================================================
+
+
+from __future__ import annotations
+
+# ============================================================
+# SECTION 01 - STANDARD LIBRARY IMPORTS
+# ============================================================
+
+import hashlib
+import json
+import math
+import re
+import traceback
+from dataclasses import asdict
+from dataclasses import dataclass
+from dataclasses import field
+from datetime import UTC
+from datetime import date
+from datetime import datetime
+from enum import StrEnum
+from typing import Any
+from typing import Callable
+from typing import Iterable
+from typing import Mapping
+from typing import Sequence
+
+
+# ============================================================
+# SECTION 02 - MODULE METADATA
+# ============================================================
+
+CONNECTOR_NAME = "Aussem1 Morris County Tax Board Connector"
+
+CONNECTOR_VERSION = "0.2.0"
+
+CONNECTOR_PHASE = "PHASE 2.47 PART 1.00"
+
+CONNECTOR_STATUS = "enterprise_morris_county_tax_board_connector_active"
+
+CONNECTOR_KEY = "nj_morris_tax_board"
+
+CONNECTOR_SOURCE_TYPE = "morris_tax_board"
+
+CONNECTOR_AUTHORITY = "county_tax_board_public_record"
+
+CONNECTOR_JURISDICTION = "Morris County, NJ"
+
+CONNECTOR_RELEASE_CHANNEL = "development"
+
+
+# ============================================================
+# SECTION 03 - GOVERNANCE
+# ============================================================
+
+TAX_BOARD_CONNECTOR_GOVERNANCE = {
+    "fabricated_tax_records_allowed": False,
+    "fabricated_assessment_values_allowed": False,
+    "fabricated_owner_references_allowed": False,
+    "fabricated_sale_references_allowed": False,
+    "fabricated_market_value_allowed": False,
+    "assessment_as_market_value_allowed": False,
+    "assessment_as_listing_price_allowed": False,
+    "assessment_as_appraisal_allowed": False,
+    "source_attribution_required": True,
+    "manual_review_for_ambiguous_records": True,
+    "missing_fields_must_remain_unavailable": True,
+    "partial_source_backed_results_allowed": True,
+}
+
+
+SUPPORTED_FIELDS = [
+    "tax_year",
+    "block",
+    "lot",
+    "qualifier",
+    "municipality",
+    "county",
+    "state_code",
+    "property_class",
+    "land_assessment",
+    "improvement_assessment",
+    "total_assessment",
+    "owner_reference",
+    "sale_reference",
+    "source_attribution",
+    "manual_review_flags",
+]
+
+
+UNSUPPORTED_CLAIMS = [
+    "current_market_value",
+    "active_listing_status",
+    "under_contract_status",
+    "current_listing_price",
+    "appraisal_value",
+    "legal_title_opinion",
+    "survey_boundary",
+]
+
+
+STANDARD_LIMITATIONS = [
+    "Tax assessment is public-record context and is not current market value.",
+    "Tax assessment is not a listing price.",
+    "Tax assessment is not an appraisal.",
+    "Owner reference is public-record context and may require manual review.",
+    "Sale reference from tax data is historical context only when source-backed.",
+    "Current listing status requires an authorized MLS, RESO, IDX, broker-authorized feed, or listing-provider source.",
+]
+
+
+# ============================================================
+# SECTION 04 - REGEX / NORMALIZATION CONSTANTS
+# ============================================================
+
+MONEY_RE = re.compile(r"[-+]?\$?\s*([0-9]{1,3}(?:,[0-9]{3})*|[0-9]+)(?:\.[0-9]+)?")
+
+YEAR_RE = re.compile(r"\b(19[0-9]{2}|20[0-9]{2}|21[0-9]{2})\b")
+
+BLOCK_LOT_RE = re.compile(
+    r"\b(?:BLOCK|BLK)\s*[:#\-]?\s*(?P<block>[A-Z0-9.\-]+)\b.*?\b(?:LOT|LT)\s*[:#\-]?\s*(?P<lot>[A-Z0-9.\-]+)\b",
+    re.IGNORECASE,
+)
+
+LOT_BLOCK_RE = re.compile(
+    r"\b(?:LOT|LT)\s*[:#\-]?\s*(?P<lot>[A-Z0-9.\-]+)\b.*?\b(?:BLOCK|BLK)\s*[:#\-]?\s*(?P<block>[A-Z0-9.\-]+)\b",
+    re.IGNORECASE,
+)
+
+QUALIFIER_RE = re.compile(
+    r"\b(?:QUALIFIER|QUAL|Q)\s*[:#\-]?\s*(?P<qualifier>[A-Z0-9.\-]+)\b",
+    re.IGNORECASE,
+)
+
+WHITESPACE_RE = re.compile(r"\s+")
+
+
+# ============================================================
+# SECTION 05 - MORRIS COUNTY MUNICIPALITY HINTS
+# ============================================================
+
+MORRIS_COUNTY_MUNICIPALITIES = {
+    "BOONTON": "Boonton",
+    "BOONTON TOWNSHIP": "Boonton Township",
+    "BUTLER": "Butler",
+    "CHATHAM": "Chatham",
+    "CHATHAM BOROUGH": "Chatham Borough",
+    "CHATHAM TOWNSHIP": "Chatham Township",
+    "CHESTER": "Chester",
+    "CHESTER BOROUGH": "Chester Borough",
+    "CHESTER TOWNSHIP": "Chester Township",
+    "DENVILLE": "Denville",
+    "DOVER": "Dover",
+    "EAST HANOVER": "East Hanover",
+    "FLORHAM PARK": "Florham Park",
+    "HANOVER": "Hanover",
+    "HANOVER TOWNSHIP": "Hanover Township",
+    "HARDING": "Harding",
+    "HARDING TOWNSHIP": "Harding Township",
+    "JEFFERSON": "Jefferson",
+    "JEFFERSON TOWNSHIP": "Jefferson Township",
+    "KINNELON": "Kinnelon",
+    "LINCOLN PARK": "Lincoln Park",
+    "LONG HILL": "Long Hill",
+    "LONG HILL TOWNSHIP": "Long Hill Township",
+    "MADISON": "Madison",
+    "MENDHAM": "Mendham",
+    "MENDHAM BOROUGH": "Mendham Borough",
+    "MENDHAM TOWNSHIP": "Mendham Township",
+    "MINE HILL": "Mine Hill",
+    "MONTVILLE": "Montville",
+    "MONTVILLE TOWNSHIP": "Montville Township",
+    "MORRIS": "Morris Township",
+    "MORRIS TOWNSHIP": "Morris Township",
+    "MORRIS PLAINS": "Morris Plains",
+    "MORRISTOWN": "Morristown",
+    "MOUNT ARLINGTON": "Mount Arlington",
+    "MOUNT OLIVE": "Mount Olive",
+    "MOUNT OLIVE TOWNSHIP": "Mount Olive Township",
+    "MOUNTAIN LAKES": "Mountain Lakes",
+    "NETCONG": "Netcong",
+    "PARSIPPANY": "Parsippany-Troy Hills",
+    "PARSIPPANY TROY HILLS": "Parsippany-Troy Hills",
+    "PARSIPPANY-TROY HILLS": "Parsippany-Troy Hills",
+    "PASSAIC TOWNSHIP": "Passaic Township",
+    "PEQUANNOCK": "Pequannock Township",
+    "PEQUANNOCK TOWNSHIP": "Pequannock Township",
+    "RANDOLPH": "Randolph",
+    "RANDOLPH TOWNSHIP": "Randolph Township",
+    "RIVERDALE": "Riverdale",
+    "ROCKAWAY": "Rockaway",
+    "ROCKAWAY BOROUGH": "Rockaway Borough",
+    "ROCKAWAY TOWNSHIP": "Rockaway Township",
+    "ROXBURY": "Roxbury Township",
+    "ROXBURY TOWNSHIP": "Roxbury Township",
+    "VICTORY GARDENS": "Victory Gardens",
+    "WASHINGTON": "Washington Township",
+    "WASHINGTON TOWNSHIP": "Washington Township",
+    "WHARTON": "Wharton",
+}
+
+
+# ============================================================
+# SECTION 06 - ENUMERATIONS
+# ============================================================
+
+class TaxBoardConnectorStatus(StrEnum):
+    SUCCESS = "success"
+    PARTIAL = "partial"
+    UNAVAILABLE = "unavailable"
+    SKIPPED = "skipped"
+    ERROR = "error"
+
+
+class TaxBoardFactStatus(StrEnum):
+    SOURCE_BACKED = "source_backed"
+    INFERRED = "inferred"
+    UNAVAILABLE = "unavailable"
+    UNSUPPORTED = "unsupported"
+    MANUAL_REVIEW_REQUIRED = "manual_review_required"
+    CONFLICTED = "conflicted"
+
+
+class TaxBoardQueryMode(StrEnum):
+    ADDRESS = "address"
+    BLOCK_LOT = "block_lot"
+    PARCEL_ID = "parcel_id"
+    OWNER_REFERENCE = "owner_reference"
+    UNKNOWN = "unknown"
+
+
+class ManualReviewSeverity(StrEnum):
+    INFO = "info"
+    WARNING = "warning"
+    ERROR = "error"
+    CRITICAL = "critical"
+
+
+# ============================================================
+# SECTION 07 - UTILITY FUNCTIONS
+# ============================================================
+
+def utc_now() -> str:
+    return datetime.now(UTC).isoformat()
+
+
+def safe_string(value: Any) -> str:
+    if value is None:
+        return ""
+
+    return str(value).strip()
+
+
+def normalize_text(value: Any) -> str:
+    text = safe_string(value).upper()
+    text = WHITESPACE_RE.sub(" ", text).strip()
+
+    return text
+
+
+def normalize_key(value: Any) -> str:
+    text = safe_string(value).lower()
+    output: list[str] = []
+
+    for character in text:
+        if character.isalnum():
+            output.append(character)
+        elif output and output[-1] != "_":
+            output.append("_")
+
+    return "".join(output).strip("_")
+
+
+def clean_value(value: Any) -> str | None:
+    text = safe_string(value)
+
+    return text or None
+
+
+def normalize_state(value: Any) -> str | None:
+    text = normalize_text(value)
+
+    if not text:
+        return None
+
+    if text in {"NJ", "NEW JERSEY"}:
+        return "NJ"
+
+    return text
+
+
+def normalize_county(value: Any) -> str | None:
+    text = safe_string(value)
+
+    if not text:
+        return None
+
+    text = text.replace("County", "").replace("county", "").strip()
+
+    return text.title()
+
+
+def normalize_municipality(value: Any) -> str | None:
+    text = normalize_text(value)
+
+    if not text:
+        return None
+
+    if text in MORRIS_COUNTY_MUNICIPALITIES:
+        return MORRIS_COUNTY_MUNICIPALITIES[text]
+
+    return safe_string(value).title()
+
+
+def normalize_block_lot(value: Any) -> str | None:
+    text = normalize_text(value)
+
+    if not text:
+        return None
+
+    cleaned = re.sub(r"[^A-Z0-9.\-]", "", text)
+
+    return cleaned or None
+
+
+def parse_money(value: Any) -> float | None:
+    if value in (None, ""):
+        return None
+
+    if isinstance(value, (int, float)) and math.isfinite(float(value)):
+        return float(value)
+
+    text = safe_string(value)
+
+    if not text:
+        return None
+
+    match = MONEY_RE.search(text)
+
+    if not match:
+        return None
+
+    try:
+        return float(match.group(1).replace(",", ""))
+    except Exception:
+        return None
+
+
+def parse_year(value: Any) -> str | None:
+    text = safe_string(value)
+
+    if not text:
+        return None
+
+    match = YEAR_RE.search(text)
+
+    if not match:
+        return None
+
+    return match.group(1)
+
+
+def clamp_score(value: Any) -> float:
+    try:
+        number = float(value)
+    except Exception:
+        return 0.0
+
+    if not math.isfinite(number):
+        return 0.0
+
+    return max(0.0, min(1.0, number))
+
+
+def stable_hash(value: Any) -> str:
+    payload = json.dumps(
+        value,
+        sort_keys=True,
+        default=str,
+        separators=(",", ":"),
+    )
+
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+
+def object_to_dict(value: Any) -> Any:
+    if value is None:
+        return None
+
+    if isinstance(value, StrEnum):
+        return value.value
+
+    if isinstance(value, (datetime, date)):
+        return value.isoformat()
+
+    if hasattr(value, "to_dict") and callable(value.to_dict):
+        return value.to_dict()
+
+    if hasattr(value, "__dataclass_fields__"):
+        return {
+            key: object_to_dict(item)
+            for key, item in asdict(value).items()
+        }
+
+    if isinstance(value, Mapping):
+        return {
+            str(key): object_to_dict(item)
+            for key, item in value.items()
+        }
+
+    if isinstance(value, Sequence) and not isinstance(
+        value,
+        (str, bytes, bytearray),
+    ):
+        return [
+            object_to_dict(item)
+            for item in value
+        ]
+
+    return value
+
+
+def flatten_mapping(
+    payload: Mapping[str, Any],
+    *,
+    prefix: str = "",
+) -> dict[str, Any]:
+    result: dict[str, Any] = {}
+
+    for key, value in payload.items():
+        full_key = f"{prefix}.{normalize_key(key)}" if prefix else normalize_key(key)
+
+        if isinstance(value, Mapping):
+            result.update(flatten_mapping(value, prefix=full_key))
+        else:
+            result[full_key] = value
+
+    return result
+
+
+def first_value(payload: Mapping[str, Any], keys: Sequence[str]) -> Any:
+    for key in keys:
+        if key in payload and payload[key] not in (None, "", [], {}):
+            return payload[key]
+
+    return None
+
+
+# ============================================================
+# SECTION 08 - DATA CONTRACTS
+# ============================================================
+
+@dataclass
+class TaxBoardRequest:
+    raw_query: str | None = None
+    street_address: str | None = None
+    normalized_address: str | None = None
+    municipality: str | None = None
+    county: str | None = None
+    state: str | None = None
+    state_code: str | None = None
+    postal_code: str | None = None
+    block: str | None = None
+    lot: str | None = None
+    qualifier: str | None = None
+    parcel_id: str | None = None
+    owner_reference: str | None = None
+    tax_year: str | None = None
+    query_mode: str = TaxBoardQueryMode.UNKNOWN.value
+    strict_source_mode: bool = True
+    metadata: dict[str, Any] = field(default_factory=dict)
+
+    def to_dict(self) -> dict[str, Any]:
+        return object_to_dict(asdict(self))
+
+
+@dataclass
+class TaxBoardSourceReference:
+    source_name: str = CONNECTOR_NAME
+    source_type: str = CONNECTOR_SOURCE_TYPE
+    connector_key: str = CONNECTOR_KEY
+    source_authority: str = CONNECTOR_AUTHORITY
+    jurisdiction: str = CONNECTOR_JURISDICTION
+    record_id: str | None = None
+    source_url: str | None = None
+    retrieved_at: str = field(default_factory=utc_now)
+    field_path: str | None = None
+    confidence: float = 0.0
+    raw_payload_hash: str | None = None
+    metadata: dict[str, Any] = field(default_factory=dict)
+
+    def to_dict(self) -> dict[str, Any]:
+        return object_to_dict(asdict(self))
+
+
+@dataclass
+class TaxAssessmentRecord:
+    tax_year: str | None = None
+    block: str | None = None
+    lot: str | None = None
+    qualifier: str | None = None
+    municipality: str | None = None
+    county: str | None = "Morris"
+    state_code: str | None = "NJ"
+    property_class: str | None = None
+    land_assessment: float | None = None
+    improvement_assessment: float | None = None
+    total_assessment: float | None = None
+    owner_reference: str | None = None
+    sale_date: str | None = None
+    sale_price: float | None = None
+    deed_book: str | None = None
+    deed_page: str | None = None
+    document_number: str | None = None
+    source_status: str = TaxBoardFactStatus.UNAVAILABLE.value
+    confidence: float = 0.0
+    manual_review_required: bool = False
+    manual_review_reasons: list[str] = field(default_factory=list)
+    source: TaxBoardSourceReference = field(default_factory=TaxBoardSourceReference)
+    raw_payload: dict[str, Any] = field(default_factory=dict)
+
+    def to_dict(self) -> dict[str, Any]:
+        return object_to_dict(asdict(self))
+
+
+@dataclass
+class TaxBoardManualReviewItem:
+    code: str
+    message: str
+    severity: str = ManualReviewSeverity.WARNING.value
+    field_path: str | None = None
+    required_action: str | None = None
+    metadata: dict[str, Any] = field(default_factory=dict)
+
+    def to_dict(self) -> dict[str, Any]:
+        return object_to_dict(asdict(self))
+
+
+@dataclass
+class TaxBoardConnectorResult:
+    success: bool
+    status: str
+    query_mode: str
+    request: TaxBoardRequest
+    records: list[dict[str, Any]] = field(default_factory=list)
+    facts: dict[str, Any] = field(default_factory=dict)
+    sources: list[TaxBoardSourceReference] = field(default_factory=list)
+    manual_review_items: list[TaxBoardManualReviewItem] = field(default_factory=list)
+    unavailable_fields: list[dict[str, Any]] = field(default_factory=list)
+    unsupported_claims: list[dict[str, Any]] = field(default_factory=list)
+    warnings: list[str] = field(default_factory=list)
+    errors: list[dict[str, Any]] = field(default_factory=list)
+    confidence: float = 0.0
+    completeness_score: float = 0.0
+    source_coverage_score: float = 0.0
+    limitations: list[str] = field(default_factory=lambda: list(STANDARD_LIMITATIONS))
+    governance: dict[str, Any] = field(default_factory=lambda: TAX_BOARD_CONNECTOR_GOVERNANCE.copy())
+    metadata: dict[str, Any] = field(default_factory=dict)
+
+    def to_dict(self) -> dict[str, Any]:
+        payload = object_to_dict(asdict(self))
+
+        if isinstance(payload.get("facts"), Mapping):
+            for key, value in payload["facts"].items():
+                payload.setdefault(key, value)
+
+        return payload
+
+
+# ============================================================
+# SECTION 09 - REQUEST NORMALIZER
+# ============================================================
+
+class TaxBoardRequestNormalizer:
+    def normalize(
+        self,
+        request: TaxBoardRequest | Mapping[str, Any] | str | None = None,
+        **kwargs: Any,
+    ) -> TaxBoardRequest:
+        if isinstance(request, TaxBoardRequest):
+            normalized = request
+        elif isinstance(request, Mapping):
+            normalized = self.from_mapping(request)
+        elif isinstance(request, str):
+            normalized = TaxBoardRequest(
+                raw_query=request,
+                street_address=request,
+                normalized_address=request,
+            )
+        else:
+            normalized = self.from_mapping(kwargs)
+
+        for key, value in kwargs.items():
+            if hasattr(normalized, key) and value not in (None, ""):
+                setattr(normalized, key, value)
+
+        normalized.state_code = normalize_state(normalized.state_code or normalized.state) or "NJ"
+        normalized.state = normalized.state_code
+        normalized.county = normalize_county(normalized.county) or "Morris"
+        normalized.municipality = normalize_municipality(normalized.municipality)
+        normalized.block = normalize_block_lot(normalized.block)
+        normalized.lot = normalize_block_lot(normalized.lot)
+        normalized.qualifier = normalize_block_lot(normalized.qualifier)
+        normalized.tax_year = parse_year(normalized.tax_year)
+
+        self.extract_block_lot_from_query(normalized)
+        self.detect_municipality_from_query(normalized)
+
+        if normalized.query_mode == TaxBoardQueryMode.UNKNOWN.value:
+            normalized.query_mode = self.detect_query_mode(normalized)
+
+        return normalized
+
+    @staticmethod
+    def from_mapping(payload: Mapping[str, Any]) -> TaxBoardRequest:
+        return TaxBoardRequest(
+            raw_query=payload.get("raw_query")
+            or payload.get("query")
+            or payload.get("address")
+            or payload.get("raw_address"),
+            street_address=payload.get("street_address")
+            or payload.get("address_line_1")
+            or payload.get("normalized_street_address"),
+            normalized_address=payload.get("normalized_address")
+            or payload.get("canonical_address"),
+            municipality=payload.get("municipality") or payload.get("city"),
+            county=payload.get("county"),
+            state=payload.get("state") or payload.get("state_code"),
+            state_code=payload.get("state_code") or payload.get("state"),
+            postal_code=payload.get("postal_code") or payload.get("zip"),
+            block=payload.get("block"),
+            lot=payload.get("lot"),
+            qualifier=payload.get("qualifier"),
+            parcel_id=payload.get("parcel_id") or payload.get("parcel_number"),
+            owner_reference=payload.get("owner_reference") or payload.get("owner"),
+            tax_year=payload.get("tax_year"),
+            query_mode=payload.get("query_mode")
+            or payload.get("primary_query_mode")
+            or TaxBoardQueryMode.UNKNOWN.value,
+            strict_source_mode=bool(payload.get("strict_source_mode", True)),
+            metadata=dict(payload.get("metadata") or {}),
+        )
+
+    @staticmethod
+    def detect_query_mode(request: TaxBoardRequest) -> str:
+        if request.block and request.lot:
+            return TaxBoardQueryMode.BLOCK_LOT.value
+
+        if request.parcel_id:
+            return TaxBoardQueryMode.PARCEL_ID.value
+
+        if request.owner_reference and not (request.street_address or request.raw_query):
+            return TaxBoardQueryMode.OWNER_REFERENCE.value
+
+        if request.street_address or request.normalized_address or request.raw_query:
+            return TaxBoardQueryMode.ADDRESS.value
+
+        return TaxBoardQueryMode.UNKNOWN.value
+
+    @staticmethod
+    def extract_block_lot_from_query(request: TaxBoardRequest) -> None:
+        text = " ".join(
+            value
+            for value in [
+                request.raw_query,
+                request.street_address,
+                request.normalized_address,
+            ]
+            if value
+        )
+
+        if not text:
+            return
+
+        match = BLOCK_LOT_RE.search(text) or LOT_BLOCK_RE.search(text)
+
+        if match:
+            request.block = request.block or normalize_block_lot(match.group("block"))
+            request.lot = request.lot or normalize_block_lot(match.group("lot"))
+
+        qualifier_match = QUALIFIER_RE.search(text)
+
+        if qualifier_match:
+            request.qualifier = request.qualifier or normalize_block_lot(
+                qualifier_match.group("qualifier")
+            )
+
+    @staticmethod
+    def detect_municipality_from_query(request: TaxBoardRequest) -> None:
+        if request.municipality:
+            return
+
+        text = normalize_text(
+            " ".join(
+                value
+                for value in [
+                    request.raw_query,
+                    request.street_address,
+                    request.normalized_address,
+                ]
+                if value
+            )
+        )
+
+        best: tuple[int, str] | None = None
+
+        for key, display in MORRIS_COUNTY_MUNICIPALITIES.items():
+            if f" {key} " in f" {text} ":
+                length = len(key)
+                if best is None or length > best[0]:
+                    best = (length, display)
+
+        if best:
+            request.municipality = best[1]
+
+
+# ============================================================
+# SECTION 10 - SOURCE-BACKED RECORD NORMALIZER
+# ============================================================
+
+class TaxBoardRecordNormalizer:
+    FIELD_CANDIDATES = {
+        "tax_year": [
+            "tax_year",
+            "year",
+            "assessment_year",
+            "tax.assessment_year",
+            "assessment.tax_year",
+        ],
+        "block": [
+            "block",
+            "blk",
+            "tax.block",
+            "assessment.block",
+            "parcel.block",
+        ],
+        "lot": [
+            "lot",
+            "lt",
+            "tax.lot",
+            "assessment.lot",
+            "parcel.lot",
+        ],
+        "qualifier": [
+            "qualifier",
+            "qual",
+            "q",
+            "tax.qualifier",
+            "assessment.qualifier",
+        ],
+        "municipality": [
+            "municipality",
+            "muni",
+            "city",
+            "town",
+            "tax.municipality",
+            "assessment.municipality",
+        ],
+        "property_class": [
+            "property_class",
+            "class",
+            "prop_class",
+            "tax.property_class",
+            "assessment.property_class",
+        ],
+        "land_assessment": [
+            "land_assessment",
+            "land_value",
+            "land_assessed_value",
+            "tax.land_assessment",
+            "assessment.land_assessment",
+        ],
+        "improvement_assessment": [
+            "improvement_assessment",
+            "improvement_value",
+            "improvements",
+            "building_assessment",
+            "tax.improvement_assessment",
+            "assessment.improvement_assessment",
+        ],
+        "total_assessment": [
+            "total_assessment",
+            "assessed_value",
+            "total_assessed_value",
+            "tax.total_assessment",
+            "assessment.total_assessment",
+        ],
+        "owner_reference": [
+            "owner",
+            "owner_name",
+            "owner_reference",
+            "tax.owner",
+            "assessment.owner",
+        ],
+        "sale_date": [
+            "sale_date",
+            "last_sale_date",
+            "deed_date",
+            "tax.sale_date",
+        ],
+        "sale_price": [
+            "sale_price",
+            "last_sale_price",
+            "consideration",
+            "tax.sale_price",
+        ],
+        "deed_book": [
+            "deed_book",
+            "book",
+            "sale_book",
+        ],
+        "deed_page": [
+            "deed_page",
+            "page",
+            "sale_page",
+        ],
+        "document_number": [
+            "document_number",
+            "instrument_number",
+            "doc_number",
+            "id",
+        ],
+    }
+
+    def normalize_record(
+        self,
+        record_payload: Mapping[str, Any],
+        *,
+        request: TaxBoardRequest,
+        source: TaxBoardSourceReference | None = None,
+    ) -> TaxAssessmentRecord:
+        flattened = flatten_mapping(record_payload)
+
+        tax_year = parse_year(self.extract(flattened, "tax_year")) or request.tax_year
+        block = normalize_block_lot(self.extract(flattened, "block") or request.block)
+        lot = normalize_block_lot(self.extract(flattened, "lot") or request.lot)
+        qualifier = normalize_block_lot(
+            self.extract(flattened, "qualifier") or request.qualifier
+        )
+        municipality = normalize_municipality(
+            self.extract(flattened, "municipality") or request.municipality
+        )
+        property_class = clean_value(self.extract(flattened, "property_class"))
+        land_assessment = parse_money(self.extract(flattened, "land_assessment"))
+        improvement_assessment = parse_money(
+            self.extract(flattened, "improvement_assessment")
+        )
+        total_assessment = parse_money(self.extract(flattened, "total_assessment"))
+        owner_reference = clean_value(self.extract(flattened, "owner_reference"))
+        sale_date = clean_value(self.extract(flattened, "sale_date"))
+        sale_price = parse_money(self.extract(flattened, "sale_price"))
+        deed_book = clean_value(self.extract(flattened, "deed_book"))
+        deed_page = clean_value(self.extract(flattened, "deed_page"))
+        document_number = clean_value(self.extract(flattened, "document_number"))
+
+        source = source or TaxBoardSourceReference(
+            confidence=0.0,
+            raw_payload_hash=stable_hash(record_payload),
+        )
+
+        confidence = self.score_record(
+            tax_year=tax_year,
+            block=block,
+            lot=lot,
+            municipality=municipality,
+            property_class=property_class,
+            land_assessment=land_assessment,
+            improvement_assessment=improvement_assessment,
+            total_assessment=total_assessment,
+            owner_reference=owner_reference,
+            sale_date=sale_date,
+            sale_price=sale_price,
+        )
+
+        manual_review_reasons = self.manual_review_reasons(
+            tax_year=tax_year,
+            block=block,
+            lot=lot,
+            municipality=municipality,
+            total_assessment=total_assessment,
+            record_payload=record_payload,
+        )
+
+        status_value = (
+            TaxBoardFactStatus.SOURCE_BACKED.value
+            if confidence > 0
+            else TaxBoardFactStatus.UNAVAILABLE.value
+        )
+
+        if manual_review_reasons and confidence > 0:
+            status_value = TaxBoardFactStatus.MANUAL_REVIEW_REQUIRED.value
+
+        source.confidence = confidence
+        source.raw_payload_hash = stable_hash(record_payload)
+
+        return TaxAssessmentRecord(
+            tax_year=tax_year,
+            block=block,
+            lot=lot,
+            qualifier=qualifier,
+            municipality=municipality,
+            county="Morris",
+            state_code="NJ",
+            property_class=property_class,
+            land_assessment=land_assessment,
+            improvement_assessment=improvement_assessment,
+            total_assessment=total_assessment,
+            owner_reference=owner_reference,
+            sale_date=sale_date,
+            sale_price=sale_price,
+            deed_book=deed_book,
+            deed_page=deed_page,
+            document_number=document_number,
+            source_status=status_value,
+            confidence=confidence,
+            manual_review_required=bool(manual_review_reasons),
+            manual_review_reasons=manual_review_reasons,
+            source=source,
+            raw_payload=dict(record_payload),
+        )
+
+    def normalize_records(
+        self,
+        records: Sequence[Mapping[str, Any]],
+        *,
+        request: TaxBoardRequest,
+    ) -> list[TaxAssessmentRecord]:
+        normalized: list[TaxAssessmentRecord] = []
+
+        for index, record in enumerate(records):
+            source = TaxBoardSourceReference(
+                record_id=clean_value(
+                    record.get("record_id")
+                    or record.get("id")
+                    or f"tax-board-record-{index + 1}"
+                ),
+                field_path="tax_assessment_context",
+                confidence=0.0,
+                raw_payload_hash=stable_hash(record),
+                metadata={
+                    "record_index": index,
+                },
+            )
+            normalized.append(
+                self.normalize_record(
+                    record,
+                    request=request,
+                    source=source,
+                )
+            )
+
+        return normalized
+
+    def extract(self, flattened: Mapping[str, Any], field_name: str) -> Any:
+        return first_value(flattened, self.FIELD_CANDIDATES.get(field_name, []))
+
+    @staticmethod
+    def score_record(
+        *,
+        tax_year: str | None,
+        block: str | None,
+        lot: str | None,
+        municipality: str | None,
+        property_class: str | None,
+        land_assessment: float | None,
+        improvement_assessment: float | None,
+        total_assessment: float | None,
+        owner_reference: str | None,
+        sale_date: str | None,
+        sale_price: float | None,
+    ) -> float:
+        score = 0.0
+
+        if tax_year:
+            score += 0.10
+
+        if block:
+            score += 0.12
+
+        if lot:
+            score += 0.12
+
+        if municipality:
+            score += 0.10
+
+        if property_class:
+            score += 0.08
+
+        if land_assessment is not None:
+            score += 0.12
+
+        if improvement_assessment is not None:
+            score += 0.12
+
+        if total_assessment is not None:
+            score += 0.16
+
+        if owner_reference:
+            score += 0.05
+
+        if sale_date or sale_price is not None:
+            score += 0.03
+
+        return round(clamp_score(score), 6)
+
+    @staticmethod
+    def manual_review_reasons(
+        *,
+        tax_year: str | None,
+        block: str | None,
+        lot: str | None,
+        municipality: str | None,
+        total_assessment: float | None,
+        record_payload: Mapping[str, Any],
+    ) -> list[str]:
+        reasons: list[str] = []
+
+        if not tax_year:
+            reasons.append("tax_year_missing")
+
+        if not block:
+            reasons.append("block_missing")
+
+        if not lot:
+            reasons.append("lot_missing")
+
+        if not municipality:
+            reasons.append("municipality_missing")
+
+        if total_assessment is None:
+            reasons.append("total_assessment_missing")
+
+        if record_payload.get("conflict") or record_payload.get("conflicted"):
+            reasons.append("source_payload_marked_conflicted")
+
+        return reasons
+
+
+# ============================================================
+# SECTION 11 - RAW SOURCE CLIENT PLACEHOLDER
+# ============================================================
+
+class MorrisTaxBoardSourceClient:
+    """
+    Source client abstraction.
+
+    This class intentionally does not scrape or fabricate records.
+    Future approved integrations can inject a client with source-backed
+    data retrieval. The default client returns unavailable.
+    """
+
+    def search(
+        self,
+        request: TaxBoardRequest,
+    ) -> dict[str, Any]:
+        return {
+            "success": False,
+            "status": TaxBoardConnectorStatus.UNAVAILABLE.value,
+            "records": [],
+            "facts": {},
+            "warnings": [
+                "No live Morris County tax-board source client is configured."
+            ],
+            "errors": [],
+            "metadata": {
+                "client": self.__class__.__name__,
+                "generated_at": utc_now(),
+                "no_fabrication": True,
+            },
+        }
+
+
+# ============================================================
+# SECTION 12 - RESULT BUILDER
+# ============================================================
+
+class TaxBoardResultBuilder:
+    def build(
+        self,
+        *,
+        request: TaxBoardRequest,
+        records: Sequence[TaxAssessmentRecord],
+        warnings: Sequence[str] | None = None,
+        errors: Sequence[Mapping[str, Any]] | None = None,
+        raw_payload: Mapping[str, Any] | None = None,
+    ) -> TaxBoardConnectorResult:
+        warnings_list = list(warnings or [])
+        errors_list = [dict(error) for error in errors or []]
+        records_list = [record.to_dict() for record in records]
+        facts = self.build_facts(records)
+        sources = self.deduplicate_sources([record.source for record in records])
+        manual_review_items = self.build_manual_review_items(request, records)
+        unavailable_fields = self.build_unavailable_fields(facts)
+        unsupported_claims = self.build_unsupported_claims()
+        completeness_score = self.score_completeness(facts)
+        source_coverage_score = self.score_source_coverage(facts, sources)
+        confidence = self.score_confidence(
+            records=records,
+            completeness_score=completeness_score,
+            source_coverage_score=source_coverage_score,
+            manual_review_items=manual_review_items,
+            errors=errors_list,
+        )
+
+        if errors_list and not records:
+            status_value = TaxBoardConnectorStatus.ERROR.value
+        elif records and manual_review_items:
+            status_value = TaxBoardConnectorStatus.PARTIAL.value
+        elif records:
+            status_value = TaxBoardConnectorStatus.SUCCESS.value
+        else:
+            status_value = TaxBoardConnectorStatus.PARTIAL.value
+
+        success = status_value in {
+            TaxBoardConnectorStatus.SUCCESS.value,
+            TaxBoardConnectorStatus.PARTIAL.value,
+        }
+
+        if not records:
+            warnings_list.append(
+                "No source-backed Morris County tax assessment records were returned."
+            )
+
+        return TaxBoardConnectorResult(
+            success=success,
+            status=status_value,
+            query_mode=request.query_mode,
+            request=request,
+            records=records_list,
+            facts=facts,
+            sources=sources,
+            manual_review_items=manual_review_items,
+            unavailable_fields=unavailable_fields,
+            unsupported_claims=unsupported_claims,
+            warnings=list(dict.fromkeys([warning for warning in warnings_list if warning])),
+            errors=errors_list,
+            confidence=confidence,
+            completeness_score=completeness_score,
+            source_coverage_score=source_coverage_score,
+            metadata={
+                "connector": CONNECTOR_NAME,
+                "version": CONNECTOR_VERSION,
+                "phase": CONNECTOR_PHASE,
+                "generated_at": utc_now(),
+                "record_count": len(records),
+                "raw_payload_hash": stable_hash(raw_payload or {}),
+            },
+        )
+
+    def build_facts(
+        self,
+        records: Sequence[TaxAssessmentRecord],
+    ) -> dict[str, Any]:
+        best = self.select_best_record(records)
+
+        if best is None:
+            return self.empty_facts()
+
+        return {
+            "parcel_identity": {
+                "block": best.block,
+                "lot": best.lot,
+                "qualifier": best.qualifier,
+                "municipality": best.municipality,
+                "county": best.county,
+                "state_code": best.state_code,
+                "property_class": best.property_class,
+                "source_status": best.source_status,
+                "confidence": best.confidence,
+            },
+            "tax_assessment_context": {
+                "tax_year": best.tax_year,
+                "land_assessment": best.land_assessment,
+                "improvement_assessment": best.improvement_assessment,
+                "total_assessment": best.total_assessment,
+                "property_class": best.property_class,
+                "assessment_source_note": (
+                    "Tax assessment is public-record context and is not current market value."
+                ),
+                "source_status": best.source_status,
+                "confidence": best.confidence,
+            },
+            "property_tax_context": {
+                "tax_year": best.tax_year,
+                "tax_amount": None,
+                "tax_rate": None,
+                "estimated_annual_tax": None,
+                "source_status": TaxBoardFactStatus.UNAVAILABLE.value,
+                "confidence": 0.0,
+            },
+            "owner_references": (
+                [
+                    {
+                        "owner_name": best.owner_reference,
+                        "mailing_address": None,
+                        "owner_source_note": (
+                            "Owner reference is public-record context and may require manual review."
+                        ),
+                        "source_status": best.source_status,
+                        "confidence": min(best.confidence, 0.62),
+                    }
+                ]
+                if best.owner_reference
+                else []
+            ),
+            "sale_history_references": (
+                [
+                    {
+                        "sale_date": best.sale_date,
+                        "sale_price": best.sale_price,
+                        "deed_book": best.deed_book,
+                        "deed_page": best.deed_page,
+                        "document_number": best.document_number,
+                        "source_status": best.source_status,
+                        "confidence": min(best.confidence, 0.60),
+                    }
+                ]
+                if best.sale_date or best.sale_price is not None
+                else []
+            ),
+        }
+
+    @staticmethod
+    def empty_facts() -> dict[str, Any]:
+        return {
+            "parcel_identity": {
+                "block": None,
+                "lot": None,
+                "qualifier": None,
+                "municipality": None,
+                "county": "Morris",
+                "state_code": "NJ",
+                "property_class": None,
+                "source_status": TaxBoardFactStatus.UNAVAILABLE.value,
+                "confidence": 0.0,
+            },
+            "tax_assessment_context": {
+                "tax_year": None,
+                "land_assessment": None,
+                "improvement_assessment": None,
+                "total_assessment": None,
+                "property_class": None,
+                "assessment_source_note": (
+                    "Tax assessment is public-record context and is not current market value."
+                ),
+                "source_status": TaxBoardFactStatus.UNAVAILABLE.value,
+                "confidence": 0.0,
+            },
+            "property_tax_context": {
+                "tax_year": None,
+                "tax_amount": None,
+                "tax_rate": None,
+                "estimated_annual_tax": None,
+                "source_status": TaxBoardFactStatus.UNAVAILABLE.value,
+                "confidence": 0.0,
+            },
+            "owner_references": [],
+            "sale_history_references": [],
+        }
+
+    @staticmethod
+    def select_best_record(
+        records: Sequence[TaxAssessmentRecord],
+    ) -> TaxAssessmentRecord | None:
+        if not records:
+            return None
+
+        return sorted(
+            records,
+            key=lambda item: (
+                item.confidence,
+                int(item.tax_year or 0) if item.tax_year else 0,
+            ),
+            reverse=True,
+        )[0]
+
+    @staticmethod
+    def deduplicate_sources(
+        sources: Sequence[TaxBoardSourceReference],
+    ) -> list[TaxBoardSourceReference]:
+        seen: set[str] = set()
+        output: list[TaxBoardSourceReference] = []
+
+        for source in sources:
+            key = stable_hash(source.to_dict())
+
+            if key in seen:
+                continue
+
+            seen.add(key)
+            output.append(source)
+
+        return output
+
+    @staticmethod
+    def build_manual_review_items(
+        request: TaxBoardRequest,
+        records: Sequence[TaxAssessmentRecord],
+    ) -> list[TaxBoardManualReviewItem]:
+        items: list[TaxBoardManualReviewItem] = []
+
+        if request.query_mode == TaxBoardQueryMode.UNKNOWN.value:
+            items.append(
+                TaxBoardManualReviewItem(
+                    code="unknown_tax_board_query_mode",
+                    message="Tax-board query mode could not be determined.",
+                    field_path="request.query_mode",
+                    required_action="Provide address, block/lot, parcel ID, or owner reference.",
+                )
+            )
+
+        if request.county != "Morris" or request.state_code != "NJ":
+            items.append(
+                TaxBoardManualReviewItem(
+                    code="outside_morris_county_scope",
+                    message="Morris County tax-board connector received an out-of-scope request.",
+                    field_path="request.county",
+                    required_action="Route non-Morris requests to the proper county/state connector.",
+                )
+            )
+
+        if not records:
+            items.append(
+                TaxBoardManualReviewItem(
+                    code="no_source_backed_tax_records",
+                    message="No source-backed tax assessment records were returned.",
+                    field_path="records",
+                    required_action="Connect approved tax-board source client or manually verify public record.",
+                )
+            )
+
+        for record in records:
+            for reason in record.manual_review_reasons:
+                items.append(
+                    TaxBoardManualReviewItem(
+                        code=reason,
+                        message=f"Tax assessment record requires review: {reason}.",
+                        field_path="tax_assessment_context",
+                        required_action="Verify tax-board source record before relying on this field.",
+                        metadata={
+                            "record_hash": stable_hash(record.to_dict()),
+                        },
+                    )
+                )
+
+        return items
+
+    @staticmethod
+    def build_unavailable_fields(
+        facts: Mapping[str, Any],
+    ) -> list[dict[str, Any]]:
+        unavailable: list[dict[str, Any]] = []
+
+        for section_name, section_payload in facts.items():
+            if isinstance(section_payload, Mapping):
+                for field_name, value in section_payload.items():
+                    if field_name in {"source_status", "confidence", "assessment_source_note"}:
+                        continue
+
+                    if value in (None, "", [], {}):
+                        unavailable.append(
+                            {
+                                "field_name": field_name,
+                                "field_path": f"{section_name}.{field_name}",
+                                "reason": (
+                                    f"{section_name}.{field_name} is unavailable from current Morris County tax-board source data."
+                                ),
+                                "required_source": "morris_county_tax_board_public_record",
+                                "can_public_records_support": True,
+                                "manual_review_required": False,
+                            }
+                        )
+
+            if isinstance(section_payload, list) and not section_payload:
+                unavailable.append(
+                    {
+                        "field_name": section_name,
+                        "field_path": section_name,
+                        "reason": (
+                            f"{section_name} is unavailable from current Morris County tax-board source data."
+                        ),
+                        "required_source": "morris_county_tax_board_public_record",
+                        "can_public_records_support": True,
+                        "manual_review_required": False,
+                    }
+                )
+
+        return unavailable
+
+    @staticmethod
+    def build_unsupported_claims() -> list[dict[str, Any]]:
+        return [
+            {
+                "claim": claim,
+                "status": TaxBoardFactStatus.UNSUPPORTED.value,
+                "reason": (
+                    "Morris County tax-board assessment data cannot prove this claim."
+                ),
+                "required_source": (
+                    "valuation_engine_and_comparable_sales"
+                    if "market_value" in claim or "appraisal" in claim
+                    else "authorized_listing_feed_or_legal_source"
+                ),
+            }
+            for claim in UNSUPPORTED_CLAIMS
+        ]
+
+    @staticmethod
+    def score_completeness(facts: Mapping[str, Any]) -> float:
+        values: list[Any] = []
+
+        for section_payload in facts.values():
+            if isinstance(section_payload, Mapping):
+                for key, value in section_payload.items():
+                    if key in {"source_status", "confidence", "assessment_source_note"}:
+                        continue
+                    values.append(value)
+            elif isinstance(section_payload, list):
+                values.append(section_payload)
+
+        if not values:
+            return 0.0
+
+        present = [
+            value
+            for value in values
+            if value not in (None, "", [], {})
+        ]
+
+        return round(clamp_score(len(present) / len(values)), 6)
+
+    @staticmethod
+    def score_source_coverage(
+        facts: Mapping[str, Any],
+        sources: Sequence[TaxBoardSourceReference],
+    ) -> float:
+        if not sources:
+            return 0.0
+
+        source_scores = [
+            source.confidence
+            for source in sources
+        ]
+
+        return round(clamp_score(sum(source_scores) / len(source_scores)), 6)
+
+    @staticmethod
+    def score_confidence(
+        *,
+        records: Sequence[TaxAssessmentRecord],
+        completeness_score: float,
+        source_coverage_score: float,
+        manual_review_items: Sequence[TaxBoardManualReviewItem],
+        errors: Sequence[Mapping[str, Any]],
+    ) -> float:
+        record_score = 0.0
+
+        if records:
+            record_score = sum(record.confidence for record in records) / len(records)
+
+        review_penalty = min(len(manual_review_items) * 0.04, 0.35)
+        error_penalty = min(len(errors) * 0.08, 0.40)
+
+        score = (
+            record_score * 0.45
+            + completeness_score * 0.30
+            + source_coverage_score * 0.25
+            - review_penalty
+            - error_penalty
+        )
+
+        return round(clamp_score(score), 6)
+
+
+# ============================================================
+# SECTION 13 - ENTERPRISE CONNECTOR
+# ============================================================
+
+class NJMorrisTaxBoardConnector:
+    def __init__(
+        self,
+        *,
+        source_client: MorrisTaxBoardSourceClient | None = None,
+        normalizer: TaxBoardRequestNormalizer | None = None,
+        record_normalizer: TaxBoardRecordNormalizer | None = None,
+        result_builder: TaxBoardResultBuilder | None = None,
+    ) -> None:
+        self.source_client = source_client or MorrisTaxBoardSourceClient()
+        self.normalizer = normalizer or TaxBoardRequestNormalizer()
+        self.record_normalizer = record_normalizer or TaxBoardRecordNormalizer()
+        self.result_builder = result_builder or TaxBoardResultBuilder()
+
+    def collect(
+        self,
+        request: TaxBoardRequest | Mapping[str, Any] | str | None = None,
+        **kwargs: Any,
+    ) -> dict[str, Any]:
+        normalized_request = self.normalizer.normalize(request, **kwargs)
+
+        if normalized_request.state_code != "NJ" or normalized_request.county != "Morris":
+            result = self.result_builder.build(
+                request=normalized_request,
+                records=[],
+                warnings=[
+                    "Request is outside Morris County, NJ scope for this connector."
+                ],
+                errors=[],
+                raw_payload={},
+            )
+            result.status = TaxBoardConnectorStatus.SKIPPED.value
+            result.success = True
+
+            return result.to_dict()
+
+        try:
+            raw_payload = self.source_client.search(normalized_request)
+            raw_records = self.extract_raw_records(raw_payload)
+
+            normalized_records = self.record_normalizer.normalize_records(
+                raw_records,
+                request=normalized_request,
+            )
+
+            warnings = list(raw_payload.get("warnings") or [])
+            errors = list(raw_payload.get("errors") or [])
+
+            return self.result_builder.build(
+                request=normalized_request,
+                records=normalized_records,
+                warnings=warnings,
+                errors=errors,
+                raw_payload=raw_payload,
+            ).to_dict()
+
+        except Exception as exc:
+            return self.result_builder.build(
+                request=normalized_request,
+                records=[],
+                warnings=[],
+                errors=[
+                    {
+                        "code": "tax_board_connector_error",
+                        "message": f"{type(exc).__name__}: {exc}",
+                        "traceback": traceback.format_exc(),
+                    }
+                ],
+                raw_payload={},
+            ).to_dict()
+
+    def search(
+        self,
+        request: TaxBoardRequest | Mapping[str, Any] | str | None = None,
+        **kwargs: Any,
+    ) -> dict[str, Any]:
+        return self.collect(request, **kwargs)
+
+    def lookup(
+        self,
+        request: TaxBoardRequest | Mapping[str, Any] | str | None = None,
+        **kwargs: Any,
+    ) -> dict[str, Any]:
+        return self.collect(request, **kwargs)
+
+    def lookup_property(
+        self,
+        request: TaxBoardRequest | Mapping[str, Any] | str | None = None,
+        **kwargs: Any,
+    ) -> dict[str, Any]:
+        return self.collect(request, **kwargs)
+
+    def search_public_records(
+        self,
+        request: TaxBoardRequest | Mapping[str, Any] | str | None = None,
+        **kwargs: Any,
+    ) -> dict[str, Any]:
+        return self.collect(request, **kwargs)
+
+    def run(
+        self,
+        request: TaxBoardRequest | Mapping[str, Any] | str | None = None,
+        **kwargs: Any,
+    ) -> dict[str, Any]:
+        return self.collect(request, **kwargs)
+
+    def execute(
+        self,
+        request: TaxBoardRequest | Mapping[str, Any] | str | None = None,
+        **kwargs: Any,
+    ) -> dict[str, Any]:
+        return self.collect(request, **kwargs)
+
+    @staticmethod
+    def extract_raw_records(raw_payload: Mapping[str, Any]) -> list[dict[str, Any]]:
+        records = raw_payload.get("records")
+
+        if isinstance(records, list):
+            return [
+                dict(record)
+                for record in records
+                if isinstance(record, Mapping)
+            ]
+
+        data = raw_payload.get("data")
+
+        if isinstance(data, list):
+            return [
+                dict(record)
+                for record in data
+                if isinstance(record, Mapping)
+            ]
+
+        if isinstance(data, Mapping):
+            return [dict(data)]
+
+        facts = raw_payload.get("facts")
+
+        if isinstance(facts, Mapping):
+            return [dict(facts)]
+
+        return []
+
+
+# Backward-compatible aliases expected by the orchestration engine.
+MorrisTaxBoardConnector = NJMorrisTaxBoardConnector
+TaxBoardConnector = NJMorrisTaxBoardConnector
+PublicRecordConnector = NJMorrisTaxBoardConnector
+
+
+# ============================================================
+# SECTION 14 - CONVENIENCE API
+# ============================================================
+
+_default_connector = NJMorrisTaxBoardConnector()
+
+
+def get_connector() -> NJMorrisTaxBoardConnector:
+    return NJMorrisTaxBoardConnector()
+
+
+def collect_tax_board_records(
+    request: TaxBoardRequest | Mapping[str, Any] | str | None = None,
+    **kwargs: Any,
+) -> dict[str, Any]:
+    return _default_connector.collect(request, **kwargs)
+
+
+def search_tax_board_records(
+    request: TaxBoardRequest | Mapping[str, Any] | str | None = None,
+    **kwargs: Any,
+) -> dict[str, Any]:
+    return _default_connector.search(request, **kwargs)
+
+
+def lookup_tax_board_property(
+    request: TaxBoardRequest | Mapping[str, Any] | str | None = None,
+    **kwargs: Any,
+) -> dict[str, Any]:
+    return _default_connector.lookup_property(request, **kwargs)
+
+
+# ============================================================
+# SECTION 15 - HEALTH / READINESS / DIAGNOSTICS
+# ============================================================
+
+def validate_tax_board_connector_governance() -> dict[str, Any]:
+    issues: list[dict[str, Any]] = []
+
+    false_keys = [
+        "fabricated_tax_records_allowed",
+        "fabricated_assessment_values_allowed",
+        "fabricated_owner_references_allowed",
+        "fabricated_sale_references_allowed",
+        "fabricated_market_value_allowed",
+        "assessment_as_market_value_allowed",
+        "assessment_as_listing_price_allowed",
+        "assessment_as_appraisal_allowed",
+    ]
+
+    for key in false_keys:
+        if TAX_BOARD_CONNECTOR_GOVERNANCE.get(key):
+            issues.append(
+                {
+                    "issue_code": f"{key}_must_remain_false",
+                    "severity": "critical",
+                    "message": f"{key} must remain False.",
+                }
+            )
+
+    true_keys = [
+        "source_attribution_required",
+        "manual_review_for_ambiguous_records",
+        "missing_fields_must_remain_unavailable",
+        "partial_source_backed_results_allowed",
+    ]
+
+    for key in true_keys:
+        if not TAX_BOARD_CONNECTOR_GOVERNANCE.get(key):
+            issues.append(
+                {
+                    "issue_code": f"{key}_must_remain_true",
+                    "severity": "critical",
+                    "message": f"{key} must remain True.",
+                }
+            )
+
+    return {
+        "valid": not issues,
+        "issue_count": len(issues),
+        "issues": issues,
+        "checked_at": utc_now(),
+    }
+
+
+def get_tax_board_connector_metadata() -> dict[str, Any]:
+    return {
+        "name": CONNECTOR_NAME,
+        "version": CONNECTOR_VERSION,
+        "phase": CONNECTOR_PHASE,
+        "status": CONNECTOR_STATUS,
+        "connector_key": CONNECTOR_KEY,
+        "source_type": CONNECTOR_SOURCE_TYPE,
+        "authority": CONNECTOR_AUTHORITY,
+        "jurisdiction": CONNECTOR_JURISDICTION,
+        "release_channel": CONNECTOR_RELEASE_CHANNEL,
+        "generated_at": utc_now(),
+    }
+
+
+def get_tax_board_connector_health() -> dict[str, Any]:
+    governance = validate_tax_board_connector_governance()
+    sample = collect_tax_board_records(
+        {
+            "raw_query": "43 Wetmore Ave, Morristown, NJ 07960",
+            "municipality": "Morristown",
+            "county": "Morris",
+            "state_code": "NJ",
+        }
+    )
+
+    return {
+        "name": CONNECTOR_NAME,
+        "version": CONNECTOR_VERSION,
+        "phase": CONNECTOR_PHASE,
+        "status": CONNECTOR_STATUS,
+        "governance_valid": governance["valid"],
+        "governance_issue_count": governance["issue_count"],
+        "sample_status": sample.get("status"),
+        "sample_success": sample.get("success"),
+        "sample_confidence": sample.get("confidence"),
+        "source_client": _default_connector.source_client.__class__.__name__,
+        "live_source_client_configured": not isinstance(
+            _default_connector.source_client,
+            MorrisTaxBoardSourceClient,
+        ),
+        "fabricated_tax_records_allowed": False,
+        "assessment_as_market_value_allowed": False,
+        "generated_at": utc_now(),
+    }
+
+
+def get_tax_board_connector_readiness() -> dict[str, Any]:
+    health = get_tax_board_connector_health()
+
+    required = {
+        "governance_valid": health["governance_valid"],
+        "connector_importable": True,
+    }
+
+    optional = {
+        "live_source_client_configured": health["live_source_client_configured"],
+    }
+
+    return {
+        "ready": all(required.values()),
+        "required": required,
+        "optional": optional,
+        "missing_required": [
+            key for key, value in required.items() if not value
+        ],
+        "missing_optional": [
+            key for key, value in optional.items() if not value
+        ],
+        "next_files": [
+            "app/public_records/connectors/nj_morris_gis_connector.py",
+            "app/property_intelligence/valuation_engine.py",
+            "app/static/js/dashboard.js",
+        ],
+        "generated_at": utc_now(),
+    }
+
+
+def get_tax_board_connector_diagnostics() -> dict[str, Any]:
+    return {
+        "metadata": get_tax_board_connector_metadata(),
+        "health": get_tax_board_connector_health(),
+        "readiness": get_tax_board_connector_readiness(),
+        "governance": TAX_BOARD_CONNECTOR_GOVERNANCE.copy(),
+        "governance_validation": validate_tax_board_connector_governance(),
+        "supported_fields": SUPPORTED_FIELDS,
+        "unsupported_claims": UNSUPPORTED_CLAIMS,
+        "standard_limitations": STANDARD_LIMITATIONS,
+        "municipality_hint_count": len(MORRIS_COUNTY_MUNICIPALITIES),
+        "exports": __all__,
+        "generated_at": utc_now(),
+    }
+
+
+# ============================================================
+# SECTION 16 - PUBLIC EXPORTS
+# ============================================================
+
+__all__ = [
+    "CONNECTOR_NAME",
+    "CONNECTOR_VERSION",
+    "CONNECTOR_PHASE",
+    "CONNECTOR_STATUS",
+    "CONNECTOR_KEY",
+    "CONNECTOR_SOURCE_TYPE",
+    "CONNECTOR_AUTHORITY",
+    "CONNECTOR_JURISDICTION",
+    "CONNECTOR_RELEASE_CHANNEL",
+    "TAX_BOARD_CONNECTOR_GOVERNANCE",
+    "SUPPORTED_FIELDS",
+    "UNSUPPORTED_CLAIMS",
+    "STANDARD_LIMITATIONS",
+    "MORRIS_COUNTY_MUNICIPALITIES",
+    "TaxBoardConnectorStatus",
+    "TaxBoardFactStatus",
+    "TaxBoardQueryMode",
+    "ManualReviewSeverity",
+    "TaxBoardRequest",
+    "TaxBoardSourceReference",
+    "TaxAssessmentRecord",
+    "TaxBoardManualReviewItem",
+    "TaxBoardConnectorResult",
+    "TaxBoardRequestNormalizer",
+    "TaxBoardRecordNormalizer",
+    "MorrisTaxBoardSourceClient",
+    "TaxBoardResultBuilder",
+    "NJMorrisTaxBoardConnector",
+    "MorrisTaxBoardConnector",
+    "TaxBoardConnector",
+    "PublicRecordConnector",
+    "get_connector",
+    "collect_tax_board_records",
+    "search_tax_board_records",
+    "lookup_tax_board_property",
+    "validate_tax_board_connector_governance",
+    "get_tax_board_connector_metadata",
+    "get_tax_board_connector_health",
+    "get_tax_board_connector_readiness",
+    "get_tax_board_connector_diagnostics",
 ]
 
 
