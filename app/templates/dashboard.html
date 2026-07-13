@@ -1,20 +1,24 @@
 <!-- ============================================================
 AUSSEM1
-PHASE 2.40 PART 2.00
-ENTERPRISE PROPERTY INTELLIGENCE DASHBOARD TEMPLATE
+PHASE 2.40 PART 5.01
+FINAL ENTERPRISE PROPERTY INTELLIGENCE DASHBOARD TEMPLATE
 FILE: app/templates/dashboard.html
 PURPOSE:
-Modern Aussem1 real estate intelligence command center with:
-- property address intake
-- public records status visibility
-- property intelligence router visibility
-- source-grounded data governance
-- live AI chat
-- property workbench
-- dashboard metrics
+Final Phase 2.40 enterprise dashboard template for Aussem1.
+
+This dashboard provides:
+- visual property intelligence command center
+- source-governed address intake
+- AI chat console
+- public-record governance explanation
+- property API workbench
+- live system metrics
 - training and memory panels
-- diagnostics and developer payload visibility
-- future valuation/listing/MLS readiness disclosures
+- source-backed data-domain overview
+- diagnostic payload view
+- clean compatibility with app/static/js/dashboard.js
+- no duplicate inline form controller
+- no fabricated listing, valuation, owner, or public-record claims
 
 AUTHOR:
 Ryan Schuren
@@ -23,7 +27,7 @@ ASSISTANT:
 Alfred
 
 STATUS:
-ENTERPRISE PROPERTY INTELLIGENCE DASHBOARD ACTIVE
+FINAL PHASE 2.40 PROPERTY INTELLIGENCE DASHBOARD ACTIVE
 ============================================================ -->
 
 <!DOCTYPE html>
@@ -64,6 +68,7 @@ ENTERPRISE PROPERTY INTELLIGENCE DASHBOARD ACTIVE
         <nav class="dashboard-nav">
             <div class="dashboard-brand">
                 <div class="brand-mark">A1</div>
+
                 <div class="brand-copy">
                     <div class="brand-title">Aussem1</div>
                     <div class="brand-subtitle">
@@ -76,18 +81,23 @@ ENTERPRISE PROPERTY INTELLIGENCE DASHBOARD ACTIVE
                 <a class="button-link button-secondary" href="/health" target="_blank">
                     Health
                 </a>
+
                 <a class="button-link button-secondary" href="/routes" target="_blank">
                     Routes
                 </a>
+
                 <a class="button-link button-secondary" href="/property-intelligence/status" target="_blank">
                     Property Status
                 </a>
+
                 <a class="button-link button-secondary" href="/properties/health" target="_blank">
                     Property API
                 </a>
+
                 <a class="button-link button-secondary" href="/diagnostics" target="_blank">
                     Diagnostics
                 </a>
+
                 <a class="button-link button-primary" href="#live-chat">
                     Ask AI
                 </a>
@@ -104,26 +114,31 @@ ENTERPRISE PROPERTY INTELLIGENCE DASHBOARD ACTIVE
                     Source-Backed Residential Real Estate Intelligence
                 </div>
 
-                <h1>Enter one address. Build the complete property intelligence file.</h1>
+                <h1>One address. Complete property intelligence.</h1>
 
                 <p class="hero-copy">
-                    Aussem1 is being built as an AI-first real estate command center:
-                    address intelligence, public records, parcel context, county clerk
-                    references, MOD-IV assessment context, GIS context, source explanation,
-                    confidence scoring, property profile generation, future valuation, and
-                    future authorized listing-feed integration.
+                    Aussem1 is an AI-first real estate command center designed to
+                    analyze real residential properties through address intelligence,
+                    public records, parcel context, county clerk references, GIS context,
+                    MOD-IV assessment context, source explanation, confidence scoring,
+                    future valuation models, and future authorized MLS / RESO / IDX /
+                    broker-feed integration.
                 </p>
 
                 <form class="chat-form" id="heroPropertyForm" style="margin-top:30px;">
                     <input
                         id="heroPropertyAddress"
+                        name="heroPropertyAddress"
                         placeholder="Enter a real property address, block/lot, or location"
                         autocomplete="street-address"
                     />
+
                     <input
                         id="heroPropertyQuestion"
+                        name="heroPropertyQuestion"
                         placeholder="Ask what you want to know about this property..."
                     />
+
                     <button class="button-primary" type="submit">
                         Analyze Property
                     </button>
@@ -133,9 +148,11 @@ ENTERPRISE PROPERTY INTELLIGENCE DASHBOARD ACTIVE
                     <a class="button-link button-primary" href="#live-chat">
                         Open AI Console
                     </a>
+
                     <a class="button-link button-secondary" href="#property-command-center">
                         View Intelligence Stack
                     </a>
+
                     <a class="button-link button-secondary" href="#source-governance">
                         Source Rules
                     </a>
@@ -158,8 +175,8 @@ ENTERPRISE PROPERTY INTELLIGENCE DASHBOARD ACTIVE
 
                     <p class="deployment-label">
                         FastAPI runtime, dashboard routing, static assets, chatbot endpoints,
-                        public-record foundations, property-intelligence model contracts, and
-                        diagnostic endpoints are active.
+                        public-record foundations, property-intelligence models, property routes,
+                        source-governance rules, and diagnostic endpoints are active.
                     </p>
 
                     <div class="runtime-stack">
@@ -167,18 +184,27 @@ ENTERPRISE PROPERTY INTELLIGENCE DASHBOARD ACTIVE
                             <span>Platform</span>
                             <span>Aussem1</span>
                         </div>
+
                         <div class="runtime-row">
                             <span>Phase</span>
                             <span>2.40</span>
                         </div>
+
+                        <div class="runtime-row">
+                            <span>Dashboard</span>
+                            <span>Active</span>
+                        </div>
+
                         <div class="runtime-row">
                             <span>Property Models</span>
                             <span>Active</span>
                         </div>
+
                         <div class="runtime-row">
                             <span>Public Records</span>
                             <span>Foundation</span>
                         </div>
+
                         <div class="runtime-row">
                             <span>Listing Feed</span>
                             <span>Not Connected</span>
@@ -204,10 +230,12 @@ ENTERPRISE PROPERTY INTELLIGENCE DASHBOARD ACTIVE
                 <div>
                     <h2>Property Intelligence Command Center</h2>
                     <p>
-                        The platform now separates real public-record evidence, future listing-feed
-                        evidence, model-derived estimates, AI summaries, and manual-review items.
+                        Aussem1 separates real public-record evidence, future listing-feed
+                        evidence, future valuation estimates, AI summaries, confidence reports,
+                        source limitations, and manual-review flags.
                     </p>
                 </div>
+
                 <span class="subtle">Phase 2.40 Foundation</span>
             </div>
 
@@ -215,37 +243,55 @@ ENTERPRISE PROPERTY INTELLIGENCE DASHBOARD ACTIVE
                 <div class="pipeline-step">
                     <div class="pipeline-number">1</div>
                     <h4>Address Intake</h4>
-                    <p>Normalize the search signal and prepare a canonical property request.</p>
+                    <p>
+                        Normalize a user-entered address, block/lot, or property query into a
+                        source-governed property request.
+                    </p>
                 </div>
 
                 <div class="pipeline-step">
                     <div class="pipeline-number">2</div>
                     <h4>Public Records</h4>
-                    <p>Route county tax, clerk, GIS, and state MOD-IV evidence through governed connectors.</p>
+                    <p>
+                        Route county tax, county clerk, GIS, and state MOD-IV evidence through
+                        governed public-record connectors.
+                    </p>
                 </div>
 
                 <div class="pipeline-step">
                     <div class="pipeline-number">3</div>
                     <h4>Property Profile</h4>
-                    <p>Build the source-backed identity, parcel, assessment, ownership-reference, and building-fact profile.</p>
+                    <p>
+                        Build a source-backed profile for identity, parcel, assessment,
+                        ownership-reference, sale-history, and building-fact context.
+                    </p>
                 </div>
 
                 <div class="pipeline-step">
                     <div class="pipeline-number">4</div>
                     <h4>Confidence</h4>
-                    <p>Score completeness, attribution, conflicts, freshness, and review requirements.</p>
+                    <p>
+                        Score completeness, attribution, source authority, freshness, conflicts,
+                        unavailable data, and manual-review requirements.
+                    </p>
                 </div>
 
                 <div class="pipeline-step">
                     <div class="pipeline-number">5</div>
                     <h4>Source Explanation</h4>
-                    <p>Explain what each source supports, what it cannot prove, and what remains unavailable.</p>
+                    <p>
+                        Explain what each source supports, what it cannot prove, and what remains
+                        unavailable until future integrations are connected.
+                    </p>
                 </div>
 
                 <div class="pipeline-step">
                     <div class="pipeline-number">6</div>
                     <h4>Future Valuation</h4>
-                    <p>Add valuation only when model inputs, comparable support, and confidence reporting are ready.</p>
+                    <p>
+                        Add valuation only when source-backed features, comparable data, model
+                        metadata, and confidence reporting are available.
+                    </p>
                 </div>
             </div>
         </section>
@@ -259,10 +305,11 @@ ENTERPRISE PROPERTY INTELLIGENCE DASHBOARD ACTIVE
                 <div>
                     <h2>Source Governance Rules</h2>
                     <p>
-                        Aussem1 must be explicit about what the platform knows, what it does not know,
-                        and which source type is required for each claim.
+                        Aussem1 must be explicit about what the platform knows, what it does not
+                        know, and which source type is required for each real estate claim.
                     </p>
                 </div>
+
                 <span class="tag yellow">Strict Source Mode</span>
             </div>
 
@@ -271,16 +318,18 @@ ENTERPRISE PROPERTY INTELLIGENCE DASHBOARD ACTIVE
                     <h4>Public Records Can Support</h4>
                     <p>
                         Parcel identity, block/lot, tax assessment, property tax context,
-                        recorded-document references, sale-history references, ownership references,
-                        GIS context, and MOD-IV context where source-backed.
+                        deed references, mortgage references, lien references, sale-history
+                        references, owner references, GIS context, MOD-IV context, municipality,
+                        county, state, and building facts where source-backed.
                     </p>
                 </div>
 
                 <div class="property-card">
                     <h4>Public Records Cannot Prove Alone</h4>
                     <p>
-                        Active listing status, under-contract status, current listing price,
-                        days on market, showing availability, broker confirmation, or current MLS status.
+                        Active listing status, under-contract status, pending status, current
+                        listing price, days on market, showing availability, offer deadline,
+                        broker confirmation, or current MLS status.
                     </p>
                 </div>
 
@@ -288,8 +337,8 @@ ENTERPRISE PROPERTY INTELLIGENCE DASHBOARD ACTIVE
                     <h4>Future Authorized Feeds Required</h4>
                     <p>
                         MLS / RESO, IDX, broker-authorized listing feeds, valuation models,
-                        comparable datasets, school APIs, flood/risk layers, and persistence will be
-                        connected as separate source-governed systems.
+                        comparable datasets, school APIs, flood/risk layers, and persistence
+                        will be connected as separate source-governed systems.
                     </p>
                 </div>
             </div>
@@ -310,9 +359,11 @@ ENTERPRISE PROPERTY INTELLIGENCE DASHBOARD ACTIVE
                     <div>
                         <h2>Aussem1 AI Console</h2>
                         <p>
-                            Ask property, public-record, listing-status, valuation, source, or platform questions.
+                            Ask property, public-record, listing-status, valuation, source,
+                            route, architecture, or platform questions.
                         </p>
                     </div>
+
                     <span class="subtle" id="sessionId">Session: new</span>
                 </div>
 
@@ -334,9 +385,22 @@ Try:
                     </div>
 
                     <form class="chat-form" id="chatForm">
-                        <input id="propertyAddress" placeholder="Optional property address" />
-                        <input id="messageInput" placeholder="Ask Aussem1 a real estate question..." required />
-                        <button class="button-primary" type="submit">Ask</button>
+                        <input
+                            id="propertyAddress"
+                            name="propertyAddress"
+                            placeholder="Optional property address"
+                        />
+
+                        <input
+                            id="messageInput"
+                            name="messageInput"
+                            placeholder="Ask Aussem1 a real estate question..."
+                            required
+                        />
+
+                        <button class="button-primary" type="submit">
+                            Ask
+                        </button>
                     </form>
                 </div>
             </div>
@@ -349,8 +413,12 @@ Try:
                 <div class="panel-title">
                     <div>
                         <h2>Live System Metrics</h2>
-                        <p>Memory, training, review, and session telemetry.</p>
+                        <p>
+                            Memory, training, review, and session telemetry from the live
+                            dashboard controller.
+                        </p>
                     </div>
+
                     <span class="subtle" id="lastUpdated">Loading...</span>
                 </div>
 
@@ -390,9 +458,11 @@ Try:
                     <div>
                         <h2>Property API Workbench</h2>
                         <p>
-                            Live route-level visibility for the property-intelligence API now registered through main.py.
+                            Live route-level visibility for the property-intelligence API
+                            registered through the FastAPI application entry point.
                         </p>
                     </div>
+
                     <span class="tag blue">/properties</span>
                 </div>
 
@@ -400,24 +470,37 @@ Try:
                     <div class="property-card">
                         <h4>Property Router</h4>
                         <p>
-                            Dedicated HTTP contract for address analysis, profile build, confidence evaluation,
-                            source explanation, batch processing, diagnostics, and future persistence.
+                            Dedicated HTTP contract for address analysis, profile build,
+                            confidence evaluation, source explanation, batch processing,
+                            diagnostics, and future persistence.
                         </p>
+
                         <div class="hero-actions">
-                            <a class="button-link button-secondary" href="/properties" target="_blank">Root</a>
-                            <a class="button-link button-secondary" href="/properties/health" target="_blank">Health</a>
-                            <a class="button-link button-secondary" href="/properties/readiness" target="_blank">Readiness</a>
+                            <a class="button-link button-secondary" href="/properties" target="_blank">
+                                Root
+                            </a>
+
+                            <a class="button-link button-secondary" href="/properties/health" target="_blank">
+                                Health
+                            </a>
+
+                            <a class="button-link button-secondary" href="/properties/readiness" target="_blank">
+                                Readiness
+                            </a>
                         </div>
                     </div>
 
                     <div class="property-card">
                         <h4>Property Status Endpoint</h4>
                         <p>
-                            Displays router readiness, property-intelligence files, public-record files,
-                            import checks, and strict no-fabrication governance status.
+                            Displays router readiness, property-intelligence files, public-record
+                            files, import checks, and strict no-fabrication governance status.
                         </p>
+
                         <div class="hero-actions">
-                            <a class="button-link button-secondary" href="/property-intelligence/status" target="_blank">Open Status</a>
+                            <a class="button-link button-secondary" href="/property-intelligence/status" target="_blank">
+                                Open Status
+                            </a>
                         </div>
                     </div>
 
@@ -427,9 +510,15 @@ Try:
                             Confirms filesystem paths, web router state, property router state,
                             static assets, dashboard template, and Render start command readiness.
                         </p>
+
                         <div class="hero-actions">
-                            <a class="button-link button-secondary" href="/diagnostics" target="_blank">Diagnostics</a>
-                            <a class="button-link button-secondary" href="/routes" target="_blank">Routes</a>
+                            <a class="button-link button-secondary" href="/diagnostics" target="_blank">
+                                Diagnostics
+                            </a>
+
+                            <a class="button-link button-secondary" href="/routes" target="_blank">
+                                Routes
+                            </a>
                         </div>
                     </div>
                 </div>
@@ -444,10 +533,12 @@ Try:
                     <div>
                         <h2>Property Intelligence Stack</h2>
                         <p>
-                            The system is now moving from platform foundation into property-specific intelligence engines.
+                            The system is moving from general platform foundation into property-specific
+                            intelligence engines.
                         </p>
                     </div>
-                    <span class="subtle">One file, one commit, one push</span>
+
+                    <span class="subtle">One file · one commit · one push</span>
                 </div>
 
                 <div class="property-grid">
@@ -463,16 +554,16 @@ Try:
                     <div class="property-card">
                         <h4>Address Intelligence</h4>
                         <p>
-                            Next core file: normalize raw addresses, extract locality, detect block/lot signals,
-                            route public-record searches, and score address confidence.
+                            Normalizes raw addresses, extracts locality, detects block/lot signals,
+                            routes public-record searches, and scores address confidence.
                         </p>
-                        <span class="tag yellow">Next</span>
+                        <span class="tag yellow">Next Core Engine</span>
                     </div>
 
                     <div class="property-card">
                         <h4>Confidence Engine</h4>
                         <p>
-                            Future file: combine evidence quality, source authority, freshness, conflicts,
+                            Combines evidence quality, source authority, freshness, conflicts,
                             missing fields, and manual-review flags into confidence reports.
                         </p>
                         <span class="tag blue">Planned</span>
@@ -481,8 +572,8 @@ Try:
                     <div class="property-card">
                         <h4>Source Explanation</h4>
                         <p>
-                            Explains claims, citations, source limitations, unsupported claims,
-                            confidence, and why data is unavailable or requires manual review.
+                            Explains claims, source limitations, unsupported fields, confidence,
+                            and why data is unavailable or requires manual review.
                         </p>
                         <span class="tag blue">Foundation</span>
                     </div>
@@ -520,25 +611,33 @@ Try:
                     <div class="module-card">
                         <strong>FastAPI Runtime</strong>
                         Serving Aussem1 through Render.
-                        <div class="module-status"><span class="tag green">Online</span></div>
+                        <div class="module-status">
+                            <span class="tag green">Online</span>
+                        </div>
                     </div>
 
                     <div class="module-card">
                         <strong>Chat Engine</strong>
                         Accepts natural-language real estate questions.
-                        <div class="module-status"><span class="tag blue">Active</span></div>
+                        <div class="module-status">
+                            <span class="tag blue">Active</span>
+                        </div>
                     </div>
 
                     <div class="module-card">
                         <strong>Public Records Engine</strong>
                         Connector orchestration foundation.
-                        <div class="module-status"><span class="tag purple">Foundation</span></div>
+                        <div class="module-status">
+                            <span class="tag purple">Foundation</span>
+                        </div>
                     </div>
 
                     <div class="module-card">
                         <strong>Property Router</strong>
                         Dedicated property-intelligence HTTP routes.
-                        <div class="module-status"><span class="tag green">Registered</span></div>
+                        <div class="module-status">
+                            <span class="tag green">Registered</span>
+                        </div>
                     </div>
                 </div>
             </div>
@@ -586,10 +685,11 @@ Try:
                     <div>
                         <h2>Source-Backed Property Data Domains</h2>
                         <p>
-                            These are the primary data domains Aussem1 will expose with source attribution,
-                            confidence, freshness, and manual-review status.
+                            These are the primary data domains Aussem1 will expose with source
+                            attribution, confidence, freshness, and manual-review status.
                         </p>
                     </div>
+
                     <span class="subtle">Canonical Domains</span>
                 </div>
 
@@ -608,7 +708,7 @@ Try:
                     <span class="tag purple">Owner References</span>
                     <span class="tag green">Physical Facts</span>
                     <span class="tag green">Comparables</span>
-                    <span class="tag green">Valuation</span>
+                    <span class="tag green">Future Valuation</span>
                     <span class="tag yellow">Listing Status Requires Feed</span>
                 </div>
             </div>
@@ -623,6 +723,7 @@ Try:
                         <h2>Live System Payload</h2>
                         <p>Backend diagnostic JSON for development verification.</p>
                     </div>
+
                     <span class="subtle">Developer View</span>
                 </div>
 
@@ -635,7 +736,7 @@ Try:
         ===================================================== -->
 
         <footer class="footer">
-            Aussem1 · Enterprise Residential Real Estate Intelligence · Phase 2.40 Part 2.00<br />
+            Aussem1 · Enterprise Residential Real Estate Intelligence · Phase 2.40 Part 5.01<br />
             Dashboard, chatbot, memory, training, public-record foundations, property routes,
             property models, static assets, and diagnostics are active. Authorized listing-feed
             and valuation systems remain future source-governed integrations.
@@ -644,57 +745,12 @@ Try:
 
     <!-- ========================================================
     SECTION 10 - STATIC DASHBOARD JAVASCRIPT
+    NOTE:
+    The dashboard controller owns chat form binding, hero form binding,
+    metrics, diagnostics, endpoint checks, and raw payload rendering.
+    No duplicate inline controller is included here.
     ========================================================= -->
 
     <script src="/static/js/dashboard.js"></script>
-
-    <!-- ========================================================
-    SECTION 11 - HERO PROPERTY FORM BRIDGE
-    PURPOSE:
-    Lets the hero search form send a prefilled question into the
-    existing dashboard.js chat form without duplicating the full
-    controller logic.
-    ========================================================= -->
-
-    <script>
-        const heroPropertyForm = document.getElementById("heroPropertyForm");
-
-        if (heroPropertyForm) {
-            heroPropertyForm.addEventListener("submit", function (event) {
-                event.preventDefault();
-
-                const heroAddress = document.getElementById("heroPropertyAddress");
-                const heroQuestion = document.getElementById("heroPropertyQuestion");
-                const propertyAddress = document.getElementById("propertyAddress");
-                const messageInput = document.getElementById("messageInput");
-                const chatForm = document.getElementById("chatForm");
-                const liveChat = document.getElementById("live-chat");
-
-                const addressValue = heroAddress ? heroAddress.value.trim() : "";
-                const questionValue = heroQuestion ? heroQuestion.value.trim() : "";
-
-                if (propertyAddress) {
-                    propertyAddress.value = addressValue;
-                }
-
-                if (messageInput) {
-                    messageInput.value =
-                        questionValue ||
-                        `Analyze this property using source-backed rules: ${addressValue}`;
-                }
-
-                if (chatForm) {
-                    if (liveChat) {
-                        liveChat.scrollIntoView({
-                            behavior: "smooth",
-                            block: "start"
-                        });
-                    }
-
-                    chatForm.requestSubmit();
-                }
-            });
-        }
-    </script>
 </body>
 </html>
