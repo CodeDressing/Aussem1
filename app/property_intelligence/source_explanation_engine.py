@@ -1,2604 +1,2077 @@
-"""
-============================================================
-AUSSEM REAL ESTATE
-PHASE 5.30 - SOURCE EXPLANATION ENGINE
-FILE: app/property_intelligence/source_explanation_engine.py
+# ============================================================
+# AUSSEM1
+# PHASE 2.44 PART 1.00
+# ENTERPRISE SOURCE EXPLANATION ENGINE
+# FILE: app/property_intelligence/source_explanation_engine.py
+# PURPOSE:
+# Explain what each source supports, what each source cannot prove,
+# what data remains unavailable, what future source is required,
+# and which property facts require manual review.
+#
+# THIS ENGINE EXPLAINS:
+# - why public records support parcel / tax / deed / GIS / MOD-IV context
+# - why public records cannot prove active listing status
+# - why public records cannot prove under-contract status
+# - why assessment is not market value
+# - why valuation may be unavailable
+# - what future source is required
+# - which facts require manual review
+#
+# CORE GOVERNANCE:
+# - Does not fabricate facts.
+# - Does not fabricate source support.
+# - Does not turn assessment into market value.
+# - Does not claim listing status without an authorized feed.
+# - Does not claim valuation without valuation inputs.
+# - Clearly separates supported, unsupported, unavailable, and review-required claims.
+#
+# AUTHOR:
+# Ryan Schuren
+#
+# ASSISTANT:
+# Alfred
+#
+# STATUS:
+# ENTERPRISE SOURCE EXPLANATION ENGINE ACTIVE
+# ============================================================
 
-PURPOSE:
-Enterprise provenance, source attribution, evidence lineage, citation
-assembly, conflict explanation, confidence rationale, model-output
-explanation, and user-facing "why this result" reporting for the Aussem
-Real Estate property-intelligence platform.
-
-DESIGN PRINCIPLES:
-1. Every material result should be explainable.
-2. Every explanation should identify supporting and conflicting sources.
-3. Every source should retain provenance and lineage.
-4. User-facing narratives should remain grounded in machine-readable facts.
-5. Confidence, disagreement, freshness, and quality must be explicit.
-6. The engine must work without external APIs.
-7. The engine must integrate without circular imports.
-8. Outputs must support APIs, audit logs, reports, and UI rendering.
-9. All explanations must be deterministic and reproducible.
-10. No fabricated citations or unsupported claims.
-============================================================
-"""
 
 from __future__ import annotations
 
-import enum
+# ============================================================
+# SECTION 01 - STANDARD LIBRARY IMPORTS
+# ============================================================
+
 import hashlib
 import json
-import math
-import re
-from collections import defaultdict
-from dataclasses import asdict, dataclass, field
-from datetime import date, datetime, timezone
-from decimal import Decimal, ROUND_HALF_UP
-from typing import Any, Callable, Iterable, Mapping, MutableMapping, Optional, Protocol, Sequence
+from dataclasses import asdict
+from dataclasses import dataclass
+from dataclasses import field
+from datetime import UTC
+from datetime import datetime
+from enum import StrEnum
+from typing import Any
+from typing import Mapping
+from typing import Sequence
 
 
 # ============================================================
-# SECTION 01 - CONSTANTS
+# SECTION 02 - MODULE METADATA
 # ============================================================
 
-ZERO = Decimal("0")
-ONE = Decimal("1")
-HALF = Decimal("0.5")
-SCORE_QUANTUM = Decimal("0.000001")
+SOURCE_EXPLANATION_ENGINE_NAME = (
+    "Aussem1 Enterprise Source Explanation Engine"
+)
 
-DEFAULT_SOURCE_RELIABILITY = Decimal("0.60")
-DEFAULT_EXPLANATION_CONFIDENCE = Decimal("0.50")
-DEFAULT_MAX_CITATIONS = 10
-DEFAULT_MAX_SUPPORTING_FACTS = 12
-DEFAULT_MAX_CONFLICTS = 8
-DEFAULT_MAX_LINEAGE_DEPTH = 12
+SOURCE_EXPLANATION_ENGINE_VERSION = "0.2.0"
 
-WHITESPACE_RE = re.compile(r"\s+")
-SAFE_IDENTIFIER_RE = re.compile(r"[^A-Za-z0-9_.:\-/]+")
+SOURCE_EXPLANATION_ENGINE_PHASE = "PHASE 2.44 PART 1.00"
+
+SOURCE_EXPLANATION_ENGINE_STATUS = (
+    "enterprise_source_explanation_engine_active"
+)
+
+SOURCE_EXPLANATION_RELEASE_CHANNEL = "development"
 
 
 # ============================================================
-# SECTION 02 - GENERIC HELPERS
+# SECTION 03 - SOURCE GOVERNANCE
 # ============================================================
 
-def utcnow() -> datetime:
-    return datetime.now(timezone.utc)
+SOURCE_EXPLANATION_GOVERNANCE = {
+    "fabricated_source_support_allowed": False,
+    "fabricated_property_facts_allowed": False,
+    "fabricated_listing_status_allowed": False,
+    "fabricated_market_value_allowed": False,
+    "assessment_as_market_value_allowed": False,
+    "public_records_as_listing_feed_allowed": False,
+    "manual_review_disclosure_required": True,
+    "unsupported_claims_must_be_labeled": True,
+    "unavailable_fields_must_be_labeled": True,
+    "future_required_sources_must_be_named": True,
+    "source_limitations_must_be_explained": True,
+    "confidence_context_required": True,
+}
 
 
-def to_decimal(value: Any, default: Decimal = ZERO) -> Decimal:
-    if value is None or value == "":
-        return default
-    if isinstance(value, Decimal):
-        return value
-    try:
-        return Decimal(str(value))
-    except Exception:
-        return default
+PUBLIC_RECORD_SUPPORTED_CLAIMS = {
+    "address_identity": (
+        "Public records can support address identity when the address appears "
+        "in tax, parcel, GIS, MOD-IV, deed, or municipal records."
+    ),
+    "parcel_identity": (
+        "Public records can support parcel identity through block, lot, qualifier, "
+        "parcel ID, municipality, county, and state references."
+    ),
+    "tax_assessment": (
+        "Public records can support tax assessment context such as land assessment, "
+        "improvement assessment, total assessment, tax year, and property class."
+    ),
+    "property_tax_context": (
+        "Public records can support property tax context when tax amount, tax rate, "
+        "tax year, or municipal tax fields are available."
+    ),
+    "deed_references": (
+        "County clerk and recorded-document sources can support deed references, "
+        "book/page, document number, recorded date, party references, and sale-history context."
+    ),
+    "mortgage_references": (
+        "County clerk records may support mortgage references when those documents "
+        "are available from the public document source."
+    ),
+    "lien_references": (
+        "County clerk records may support lien references when those documents "
+        "are available from the public document source."
+    ),
+    "owner_references": (
+        "Tax and public-record sources may support owner references, but owner data "
+        "should be treated as public-record context and may require manual review."
+    ),
+    "sale_history_references": (
+        "Public records can support historical sale references when deed, tax, "
+        "or recorded-document data provides date, consideration, buyer/seller reference, "
+        "book/page, or document number."
+    ),
+    "gis_context": (
+        "County GIS sources can support parcel map context, geometry references, "
+        "lot-size context, and location context, but GIS is not a legal boundary survey."
+    ),
+    "modiv_context": (
+        "NJ MOD-IV style public-record context can support assessment and property "
+        "classification fields when available."
+    ),
+    "building_facts_when_source_backed": (
+        "Building facts can be presented only when a public record or authorized "
+        "source provides them. Missing building facts must remain unavailable."
+    ),
+}
 
 
-def clamp_score(value: Any) -> Decimal:
-    number = to_decimal(value)
-    number = max(ZERO, min(ONE, number))
-    return number.quantize(SCORE_QUANTUM, rounding=ROUND_HALF_UP)
+PUBLIC_RECORD_UNSUPPORTED_CLAIMS = {
+    "active_listing_status": (
+        "Public records alone cannot prove whether a property is currently active "
+        "on the market."
+    ),
+    "under_contract_status": (
+        "Public records alone cannot prove whether a property is currently under "
+        "contract."
+    ),
+    "pending_status": (
+        "Public records alone cannot prove whether a property is currently pending."
+    ),
+    "current_listing_price": (
+        "Public records alone cannot prove current listing price."
+    ),
+    "current_days_on_market": (
+        "Public records alone cannot prove current days on market."
+    ),
+    "showing_availability": (
+        "Public records alone cannot prove showing availability."
+    ),
+    "offer_deadline": (
+        "Public records alone cannot prove current offer deadline."
+    ),
+    "broker_confirmation": (
+        "Public records alone cannot replace broker confirmation."
+    ),
+    "current_mls_status": (
+        "Public records alone cannot prove current MLS status."
+    ),
+    "market_value_estimate": (
+        "Public records alone do not produce market value. A valuation engine, "
+        "comparable-sales data, feature extraction, and confidence calibration are required."
+    ),
+}
 
 
-def weighted_mean(
-    values: Iterable[tuple[Any, Any]],
-    *,
-    default: Decimal = DEFAULT_EXPLANATION_CONFIDENCE,
-) -> Decimal:
-    numerator = ZERO
-    denominator = ZERO
+FUTURE_REQUIRED_SOURCES = {
+    "active_listing_status": "authorized MLS / RESO / IDX / broker-authorized listing feed",
+    "under_contract_status": "authorized MLS / RESO / IDX / broker-authorized listing feed",
+    "pending_status": "authorized MLS / RESO / IDX / broker-authorized listing feed",
+    "current_listing_price": "authorized MLS / RESO / IDX / broker-authorized listing feed",
+    "current_days_on_market": "authorized MLS / RESO / IDX / broker-authorized listing feed",
+    "showing_availability": "authorized listing feed or broker confirmation",
+    "offer_deadline": "authorized listing feed or broker confirmation",
+    "broker_confirmation": "broker-authorized source",
+    "current_mls_status": "authorized MLS / RESO / IDX feed",
+    "market_value_estimate": "valuation engine and comparable-sales dataset",
+    "confidence_band": "valuation engine and confidence calibration model",
+    "comparable_sales_adjustment": "comparable-sales source and valuation feature builder",
+    "appreciation_forecast": "market trend model and historical sales dataset",
+}
 
-    for value, weight in values:
-        decimal_value = to_decimal(value)
-        decimal_weight = to_decimal(weight)
-        if decimal_weight <= ZERO:
-            continue
-        numerator += decimal_value * decimal_weight
-        denominator += decimal_weight
 
-    if denominator == ZERO:
-        return clamp_score(default)
-    return clamp_score(numerator / denominator)
+STANDARD_SOURCE_LIMITATIONS = [
+    "Tax assessment is not current market value.",
+    "GIS parcel context is not a legal boundary survey.",
+    "Public records may lag current listing, contract, or closing activity.",
+    "County clerk records may require manual review to interpret parties and document type.",
+    "Owner references from public records should be treated as administrative context, not a legal title opinion.",
+    "Public records cannot replace an authorized MLS, RESO, IDX, broker, or listing-provider feed for current listing status.",
+    "Valuation requires comparable sales, source-backed features, model metadata, and confidence calibration.",
+]
+
+
+# ============================================================
+# SECTION 04 - ENUMERATIONS
+# ============================================================
+
+class ClaimSupportStatus(StrEnum):
+    SUPPORTED = "supported"
+    UNSUPPORTED = "unsupported"
+    UNAVAILABLE = "unavailable"
+    PARTIAL = "partial"
+    REQUIRES_AUTHORIZED_SOURCE = "requires_authorized_source"
+    REQUIRES_MANUAL_REVIEW = "requires_manual_review"
+    REQUIRES_VALUATION_ENGINE = "requires_valuation_engine"
+
+
+class ExplanationSeverity(StrEnum):
+    INFO = "info"
+    WARNING = "warning"
+    ERROR = "error"
+    CRITICAL = "critical"
+
+
+class SourceCategory(StrEnum):
+    ADDRESS_INTELLIGENCE = "address_intelligence"
+    PUBLIC_RECORD = "public_record"
+    TAX_BOARD = "tax_board"
+    COUNTY_CLERK = "county_clerk"
+    GIS = "gis"
+    MODIV = "modiv"
+    AUTHORIZED_LISTING_FEED = "authorized_listing_feed"
+    VALUATION_ENGINE = "valuation_engine"
+    COMPARABLE_SALES = "comparable_sales"
+    MANUAL_REVIEW = "manual_review"
+    UNKNOWN = "unknown"
+
+
+class RequiredSourceType(StrEnum):
+    PUBLIC_RECORDS = "public_records"
+    COUNTY_TAX_BOARD = "county_tax_board"
+    COUNTY_CLERK = "county_clerk"
+    COUNTY_GIS = "county_gis"
+    NJ_STATE_MODIV = "nj_state_modiv"
+    AUTHORIZED_LISTING_FEED = "authorized_listing_feed"
+    BROKER_CONFIRMATION = "broker_confirmation"
+    VALUATION_ENGINE = "valuation_engine"
+    COMPARABLE_SALES = "comparable_sales"
+    MANUAL_REVIEW = "manual_review"
+
+
+# ============================================================
+# SECTION 05 - UTILITY FUNCTIONS
+# ============================================================
+
+def utc_now() -> str:
+    return datetime.now(UTC).isoformat()
+
+
+def safe_string(value: Any) -> str:
+    if value is None:
+        return ""
+
+    return str(value).strip()
+
+
+def normalize_key(value: Any) -> str:
+    text = safe_string(value).lower()
+    output: list[str] = []
+
+    for character in text:
+        if character.isalnum():
+            output.append(character)
+        elif output and output[-1] != "_":
+            output.append("_")
+
+    return "".join(output).strip("_")
 
 
 def stable_hash(value: Any) -> str:
-    serialized = json.dumps(value, sort_keys=True, separators=(",", ":"), default=str)
-    return hashlib.sha256(serialized.encode("utf-8")).hexdigest()
+    payload = json.dumps(
+        value,
+        sort_keys=True,
+        default=str,
+        separators=(",", ":"),
+    )
+
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
 
-def normalize_text(value: Any) -> str:
+def object_to_dict(value: Any) -> Any:
     if value is None:
-        return ""
-    return WHITESPACE_RE.sub(" ", str(value).strip())
+        return None
 
-
-def safe_identifier(value: Any) -> str:
-    normalized = SAFE_IDENTIFIER_RE.sub("-", normalize_text(value))
-    return normalized.strip("-") or "unknown"
-
-
-def isoformat_or_none(value: Any) -> Optional[str]:
-    if isinstance(value, (datetime, date)):
-        return value.isoformat()
-    return None
-
-
-def serialize_value(value: Any) -> Any:
-    if isinstance(value, Decimal):
-        return str(value)
-    if isinstance(value, enum.Enum):
+    if isinstance(value, StrEnum):
         return value.value
-    if isinstance(value, (datetime, date)):
-        return value.isoformat()
+
+    if hasattr(value, "to_dict") and callable(value.to_dict):
+        return value.to_dict()
+
+    if hasattr(value, "__dataclass_fields__"):
+        return {
+            key: object_to_dict(item)
+            for key, item in asdict(value).items()
+        }
+
     if isinstance(value, Mapping):
-        return {str(key): serialize_value(item) for key, item in value.items()}
-    if isinstance(value, (list, tuple, set)):
-        return [serialize_value(item) for item in value]
+        return {
+            str(key): object_to_dict(item)
+            for key, item in value.items()
+        }
+
+    if isinstance(value, Sequence) and not isinstance(
+        value,
+        (str, bytes, bytearray),
+    ):
+        return [
+            object_to_dict(item)
+            for item in value
+        ]
+
     return value
 
 
-def sentence_join(parts: Iterable[str]) -> str:
-    values = [normalize_text(part) for part in parts if normalize_text(part)]
-    return " ".join(
-        value if value.endswith((".", "!", "?")) else f"{value}."
-        for value in values
-    )
+def extract_nested_value(payload: Mapping[str, Any], paths: Sequence[str]) -> Any:
+    for path in paths:
+        current: Any = payload
+        found = True
+
+        for part in path.split("."):
+            if isinstance(current, Mapping) and part in current:
+                current = current[part]
+            else:
+                found = False
+                break
+
+        if found and current not in (None, "", [], {}):
+            return current
+
+    return None
+
+
+def flatten_mapping(
+    payload: Mapping[str, Any],
+    *,
+    prefix: str = "",
+) -> dict[str, Any]:
+    result: dict[str, Any] = {}
+
+    for key, value in payload.items():
+        clean_key = normalize_key(key)
+        full_key = f"{prefix}.{clean_key}" if prefix else clean_key
+
+        if isinstance(value, Mapping):
+            result.update(flatten_mapping(value, prefix=full_key))
+        else:
+            result[full_key] = value
+
+    return result
+
+
+def clamp_confidence(value: Any) -> float:
+    try:
+        number = float(value)
+    except Exception:
+        return 0.0
+
+    return max(0.0, min(1.0, number))
 
 
 # ============================================================
-# SECTION 03 - ENUMERATIONS
+# SECTION 06 - DATA CONTRACTS
 # ============================================================
 
-class StringEnum(str, enum.Enum):
-    @classmethod
-    def values(cls) -> list[str]:
-        return [member.value for member in cls]
+@dataclass
+class SourceCapability:
+    source_category: str
+    can_support: list[str] = field(default_factory=list)
+    cannot_support: list[str] = field(default_factory=list)
+    limitations: list[str] = field(default_factory=list)
+    required_future_sources: list[str] = field(default_factory=list)
+
+    def to_dict(self) -> dict[str, Any]:
+        return object_to_dict(asdict(self))
 
 
-class SourceCategory(StringEnum):
-    MLS = "mls"
-    PUBLIC_RECORD = "public_record"
-    TAX_ASSESSOR = "tax_assessor"
-    DEED = "deed"
-    COUNTY = "county"
-    MUNICIPAL = "municipal"
-    STATE = "state"
-    FEDERAL = "federal"
-    GEOSPATIAL = "geospatial"
-    PROPERTY_PROVIDER = "property_provider"
-    USER = "user"
-    BROKER = "broker"
-    INTERNAL = "internal"
-    MODEL = "model"
-    DERIVED = "derived"
-    MANUAL_REVIEW = "manual_review"
-    OTHER = "other"
+@dataclass
+class ClaimExplanation:
+    claim: str
+    status: str
+    explanation: str
+    can_public_records_support: bool = False
+    required_source: str | None = None
+    source_names: list[str] = field(default_factory=list)
+    confidence: float = 0.0
+    severity: str = ExplanationSeverity.INFO.value
+    manual_review_required: bool = False
+    metadata: dict[str, Any] = field(default_factory=dict)
+
+    def to_dict(self) -> dict[str, Any]:
+        return object_to_dict(asdict(self))
 
 
-class SourceAuthority(StringEnum):
-    PRIMARY = "primary"
-    OFFICIAL = "official"
-    AUTHORITATIVE = "authoritative"
-    SECONDARY = "secondary"
-    DERIVED = "derived"
-    USER_SUPPLIED = "user_supplied"
-    UNKNOWN = "unknown"
-
-
-class CitationType(StringEnum):
-    RECORD = "record"
-    URL = "url"
-    DOCUMENT = "document"
-    DATASET = "dataset"
-    MODEL = "model"
-    CALCULATION = "calculation"
-    HUMAN_REVIEW = "human_review"
-    INTERNAL_EVENT = "internal_event"
-
-
-class ClaimType(StringEnum):
-    FACT = "fact"
-    ESTIMATE = "estimate"
-    PREDICTION = "prediction"
-    INFERENCE = "inference"
-    RISK = "risk"
-    MARKET = "market"
-    VALUATION = "valuation"
-    COMPARABLE = "comparable"
-    ADDRESS = "address"
-    OWNERSHIP = "ownership"
-    TAX = "tax"
-    OTHER = "other"
-
-
-class SupportDirection(StringEnum):
-    SUPPORTS = "supports"
-    CONTRADICTS = "contradicts"
-    PARTIALLY_SUPPORTS = "partially_supports"
-    NEUTRAL = "neutral"
-    UNKNOWN = "unknown"
-
-
-class ExplanationAudience(StringEnum):
-    CONSUMER = "consumer"
-    SELLER = "seller"
-    BUYER = "buyer"
-    BROKER = "broker"
-    ANALYST = "analyst"
-    ADMIN = "admin"
-    AUDITOR = "auditor"
-    MODEL_DEVELOPER = "model_developer"
-
-
-class ExplanationDepth(StringEnum):
-    SUMMARY = "summary"
-    STANDARD = "standard"
-    DETAILED = "detailed"
-    AUDIT = "audit"
-
-
-class ExplanationTone(StringEnum):
-    PLAIN = "plain"
-    PROFESSIONAL = "professional"
-    TECHNICAL = "technical"
-    REGULATORY = "regulatory"
-
-
-class ConflictResolutionStatus(StringEnum):
-    UNRESOLVED = "unresolved"
-    AUTO_RESOLVED = "auto_resolved"
-    HUMAN_RESOLVED = "human_resolved"
-    DEFERRED = "deferred"
-    REJECTED = "rejected"
-
-
-class LineageNodeType(StringEnum):
-    SOURCE = "source"
-    RECORD = "record"
-    OBSERVATION = "observation"
-    FEATURE = "feature"
-    MODEL = "model"
-    PREDICTION = "prediction"
-    VALUATION = "valuation"
-    REPORT = "report"
-    REVIEW = "review"
-    TRANSFORMATION = "transformation"
-    CLAIM = "claim"
-
-
-class LineageEdgeType(StringEnum):
-    PRODUCED = "produced"
-    DERIVED_FROM = "derived_from"
-    TRANSFORMED_INTO = "transformed_into"
-    SUPPORTED = "supported"
-    CONTRADICTED = "contradicted"
-    REVIEWED = "reviewed"
-    SUPERSEDED = "superseded"
-    USED_BY = "used_by"
-
-
-class ExplanationStatus(StringEnum):
-    DRAFT = "draft"
-    COMPLETE = "complete"
-    PARTIAL = "partial"
-    BLOCKED = "blocked"
-    INVALID = "invalid"
-
-
-# ============================================================
-# SECTION 04 - SOURCE AND CITATION DATA CONTRACTS
-# ============================================================
-
-@dataclass(slots=True)
-class SourceDescriptor:
-    source_id: str
+@dataclass
+class SourceExplanation:
     source_name: str
-    category: SourceCategory = SourceCategory.OTHER
-    authority: SourceAuthority = SourceAuthority.UNKNOWN
-    provider_name: Optional[str] = None
-    record_id: Optional[str] = None
-    record_type: Optional[str] = None
-    source_url: Optional[str] = None
-    document_name: Optional[str] = None
-    dataset_name: Optional[str] = None
-    jurisdiction: Optional[str] = None
-    observed_at: Optional[datetime] = None
-    retrieved_at: Optional[datetime] = None
-    effective_at: Optional[datetime] = None
-    reliability: Decimal = DEFAULT_SOURCE_RELIABILITY
-    quality: Decimal = DEFAULT_EXPLANATION_CONFIDENCE
-    freshness: Decimal = DEFAULT_EXPLANATION_CONFIDENCE
-    license_name: Optional[str] = None
-    terms_version: Optional[str] = None
-    payload_hash: Optional[str] = None
+    source_category: str
+    source_authority: str = "unknown"
+    supported_claims: list[str] = field(default_factory=list)
+    unsupported_claims: list[str] = field(default_factory=list)
+    limitations: list[str] = field(default_factory=list)
+    confidence: float = 0.0
+    retrieved_at: str | None = None
+    record_id: str | None = None
+    source_url: str | None = None
+    raw_payload_hash: str | None = None
+    explanation: str = ""
     metadata: dict[str, Any] = field(default_factory=dict)
 
-    @property
-    def composite_score(self) -> Decimal:
-        authority_weight = {
-            SourceAuthority.PRIMARY: Decimal("1.00"),
-            SourceAuthority.OFFICIAL: Decimal("0.95"),
-            SourceAuthority.AUTHORITATIVE: Decimal("0.90"),
-            SourceAuthority.SECONDARY: Decimal("0.72"),
-            SourceAuthority.DERIVED: Decimal("0.62"),
-            SourceAuthority.USER_SUPPLIED: Decimal("0.55"),
-            SourceAuthority.UNKNOWN: Decimal("0.45"),
-        }[self.authority]
+    def to_dict(self) -> dict[str, Any]:
+        return object_to_dict(asdict(self))
 
-        return weighted_mean(
-            (
-                (self.reliability, Decimal("0.35")),
-                (self.quality, Decimal("0.25")),
-                (self.freshness, Decimal("0.20")),
-                (authority_weight, Decimal("0.20")),
-            )
+
+@dataclass
+class UnavailableDataExplanation:
+    field_name: str
+    field_path: str
+    reason: str
+    required_source: str | None = None
+    can_public_records_support: bool = False
+    manual_review_required: bool = False
+    severity: str = ExplanationSeverity.INFO.value
+    explanation: str = ""
+    metadata: dict[str, Any] = field(default_factory=dict)
+
+    def to_dict(self) -> dict[str, Any]:
+        return object_to_dict(asdict(self))
+
+
+@dataclass
+class ManualReviewExplanation:
+    code: str
+    message: str
+    severity: str = ExplanationSeverity.WARNING.value
+    field_path: str | None = None
+    required_action: str | None = None
+    why_review_is_needed: str = ""
+    metadata: dict[str, Any] = field(default_factory=dict)
+
+    def to_dict(self) -> dict[str, Any]:
+        return object_to_dict(asdict(self))
+
+
+@dataclass
+class AssessmentExplanation:
+    has_assessment: bool
+    total_assessment: float | None = None
+    land_assessment: float | None = None
+    improvement_assessment: float | None = None
+    tax_year: str | None = None
+    explanation: str = (
+        "Tax assessment is public-record context and is not current market value."
+    )
+    cannot_be_used_as_market_value: bool = True
+    valuation_required_source: str = "valuation_engine_and_comparable_sales"
+
+    def to_dict(self) -> dict[str, Any]:
+        return object_to_dict(asdict(self))
+
+
+@dataclass
+class ListingStatusExplanation:
+    listing_feed_connected: bool = False
+    active_status_supported: bool = False
+    under_contract_supported: bool = False
+    current_price_supported: bool = False
+    explanation: str = (
+        "Current listing status requires an authorized MLS, RESO, IDX, "
+        "broker-authorized feed, or listing-provider source."
+    )
+    required_source: str = "authorized_listing_feed"
+
+    def to_dict(self) -> dict[str, Any]:
+        return object_to_dict(asdict(self))
+
+
+@dataclass
+class ValuationExplanation:
+    valuation_available: bool = False
+    estimate_allowed: bool = False
+    valuation_readiness_status: str = "not_ready"
+    available_inputs: list[str] = field(default_factory=list)
+    missing_inputs: list[str] = field(default_factory=list)
+    explanation: str = (
+        "Valuation is unavailable until source-backed property facts, "
+        "comparable sales, valuation logic, and confidence metadata are available."
+    )
+    required_source: str = "valuation_engine_and_comparable_sales"
+
+    def to_dict(self) -> dict[str, Any]:
+        return object_to_dict(asdict(self))
+
+
+@dataclass
+class SourceExplanationReport:
+    summary: str
+    supported_claims: list[str] = field(default_factory=list)
+    unsupported_claims: list[str] = field(default_factory=list)
+    unavailable_claims: list[str] = field(default_factory=list)
+    public_record_limitations: list[str] = field(default_factory=list)
+    required_future_sources: list[str] = field(default_factory=list)
+    source_notes: list[str] = field(default_factory=list)
+    claim_explanations: list[ClaimExplanation] = field(default_factory=list)
+    source_explanations: list[SourceExplanation] = field(default_factory=list)
+    unavailable_data: list[UnavailableDataExplanation] = field(default_factory=list)
+    manual_review_explanations: list[ManualReviewExplanation] = field(default_factory=list)
+    assessment_explanation: AssessmentExplanation | None = None
+    listing_status_explanation: ListingStatusExplanation | None = None
+    valuation_explanation: ValuationExplanation | None = None
+    confidence_context: dict[str, Any] = field(default_factory=dict)
+    governance: dict[str, Any] = field(default_factory=dict)
+    report_id: str | None = None
+    created_at: str = field(default_factory=utc_now)
+    metadata: dict[str, Any] = field(default_factory=dict)
+
+    def to_dict(self) -> dict[str, Any]:
+        return object_to_dict(asdict(self))
+
+
+# Backward-compatible aliases.
+PropertySourceExplanationReport = SourceExplanationReport
+SourceExplanationResult = SourceExplanationReport
+
+
+# ============================================================
+# SECTION 07 - SOURCE CAPABILITY REGISTRY
+# ============================================================
+
+class SourceCapabilityRegistry:
+    def __init__(self) -> None:
+        self.capabilities = self.build_default_capabilities()
+
+    @staticmethod
+    def build_default_capabilities() -> dict[str, SourceCapability]:
+        return {
+            SourceCategory.ADDRESS_INTELLIGENCE.value: SourceCapability(
+                source_category=SourceCategory.ADDRESS_INTELLIGENCE.value,
+                can_support=[
+                    "address_normalization",
+                    "address_parse",
+                    "jurisdiction_detection",
+                    "public_record_search_preparation",
+                ],
+                cannot_support=[
+                    "parcel_fact_proof",
+                    "active_listing_status",
+                    "market_value",
+                    "owner_legal_conclusion",
+                ],
+                limitations=[
+                    "Address intelligence prepares lookup input and does not prove property facts by itself.",
+                ],
+                required_future_sources=[
+                    "public_records",
+                    "authorized_listing_feed",
+                    "valuation_engine",
+                ],
+            ),
+            SourceCategory.TAX_BOARD.value: SourceCapability(
+                source_category=SourceCategory.TAX_BOARD.value,
+                can_support=[
+                    "parcel_identity",
+                    "block_lot",
+                    "tax_assessment",
+                    "property_class",
+                    "owner_reference",
+                    "tax_context",
+                ],
+                cannot_support=[
+                    "active_listing_status",
+                    "under_contract_status",
+                    "current_listing_price",
+                    "market_value_estimate",
+                ],
+                limitations=[
+                    "Tax assessment is not current market value.",
+                    "Tax data may lag ownership or transaction changes.",
+                ],
+                required_future_sources=[
+                    "authorized_listing_feed",
+                    "valuation_engine",
+                    "comparable_sales",
+                ],
+            ),
+            SourceCategory.COUNTY_CLERK.value: SourceCapability(
+                source_category=SourceCategory.COUNTY_CLERK.value,
+                can_support=[
+                    "deed_references",
+                    "mortgage_references",
+                    "lien_references",
+                    "recorded_documents",
+                    "sale_history_references",
+                ],
+                cannot_support=[
+                    "active_listing_status",
+                    "under_contract_status",
+                    "current_listing_price",
+                    "market_value_estimate",
+                ],
+                limitations=[
+                    "Recorded documents may require manual interpretation.",
+                    "Recorded documents may lag current transaction status.",
+                ],
+                required_future_sources=[
+                    "authorized_listing_feed",
+                    "broker_confirmation",
+                    "valuation_engine",
+                ],
+            ),
+            SourceCategory.GIS.value: SourceCapability(
+                source_category=SourceCategory.GIS.value,
+                can_support=[
+                    "parcel_map_context",
+                    "geometry_reference",
+                    "lot_size_context",
+                    "location_context",
+                ],
+                cannot_support=[
+                    "legal_boundary_survey",
+                    "title_opinion",
+                    "active_listing_status",
+                    "market_value_estimate",
+                ],
+                limitations=[
+                    "GIS context is not a legal survey.",
+                    "GIS geometry can differ from legal boundary records.",
+                ],
+                required_future_sources=[
+                    "survey",
+                    "title_source",
+                    "valuation_engine",
+                ],
+            ),
+            SourceCategory.MODIV.value: SourceCapability(
+                source_category=SourceCategory.MODIV.value,
+                can_support=[
+                    "assessment_context",
+                    "property_class",
+                    "land_description",
+                    "building_description_when_available",
+                ],
+                cannot_support=[
+                    "active_listing_status",
+                    "under_contract_status",
+                    "current_listing_price",
+                    "market_value_estimate",
+                ],
+                limitations=[
+                    "MOD-IV context is administrative assessment data.",
+                    "MOD-IV is not a listing feed or market valuation model.",
+                ],
+                required_future_sources=[
+                    "authorized_listing_feed",
+                    "valuation_engine",
+                    "comparable_sales",
+                ],
+            ),
+            SourceCategory.AUTHORIZED_LISTING_FEED.value: SourceCapability(
+                source_category=SourceCategory.AUTHORIZED_LISTING_FEED.value,
+                can_support=[
+                    "active_listing_status",
+                    "under_contract_status",
+                    "pending_status",
+                    "current_listing_price",
+                    "days_on_market",
+                    "showing_availability_when_provided",
+                    "mls_status",
+                ],
+                cannot_support=[
+                    "legal_title_opinion",
+                    "tax_assessment_truth",
+                    "survey_boundary",
+                ],
+                limitations=[
+                    "Listing feeds must be authorized and current.",
+                    "Listing data must respect feed license and attribution requirements.",
+                ],
+                required_future_sources=[
+                    "public_records",
+                    "valuation_engine",
+                    "broker_confirmation_when_needed",
+                ],
+            ),
+            SourceCategory.VALUATION_ENGINE.value: SourceCapability(
+                source_category=SourceCategory.VALUATION_ENGINE.value,
+                can_support=[
+                    "market_value_estimate",
+                    "confidence_band",
+                    "estimate_low_high",
+                    "feature_based_valuation",
+                ],
+                cannot_support=[
+                    "guaranteed_sale_price",
+                    "appraisal_certification",
+                    "legal_value_conclusion",
+                ],
+                limitations=[
+                    "Valuation is an estimate, not an appraisal.",
+                    "Valuation requires source-backed inputs and comparable-sales support.",
+                ],
+                required_future_sources=[
+                    "comparable_sales",
+                    "public_records",
+                    "listing_feed_when_available",
+                ],
+            ),
+        }
+
+    def get(self, category: str) -> SourceCapability:
+        normalized = normalize_key(category)
+
+        if normalized in self.capabilities:
+            return self.capabilities[normalized]
+
+        return SourceCapability(
+            source_category=SourceCategory.UNKNOWN.value,
+            can_support=[],
+            cannot_support=[
+                "active_listing_status",
+                "market_value_estimate",
+                "legal_conclusions",
+            ],
+            limitations=[
+                "Unknown source category cannot be treated as authoritative."
+            ],
+            required_future_sources=[
+                "manual_review",
+                "source_classification",
+            ],
         )
 
-    def to_dict(self) -> dict[str, Any]:
-        return {
-            "source_id": self.source_id,
-            "source_name": self.source_name,
-            "category": self.category.value,
-            "authority": self.authority.value,
-            "provider_name": self.provider_name,
-            "record_id": self.record_id,
-            "record_type": self.record_type,
-            "source_url": self.source_url,
-            "document_name": self.document_name,
-            "dataset_name": self.dataset_name,
-            "jurisdiction": self.jurisdiction,
-            "observed_at": isoformat_or_none(self.observed_at),
-            "retrieved_at": isoformat_or_none(self.retrieved_at),
-            "effective_at": isoformat_or_none(self.effective_at),
-            "reliability": str(clamp_score(self.reliability)),
-            "quality": str(clamp_score(self.quality)),
-            "freshness": str(clamp_score(self.freshness)),
-            "composite_score": str(self.composite_score),
-            "license_name": self.license_name,
-            "terms_version": self.terms_version,
-            "payload_hash": self.payload_hash,
-            "metadata": serialize_value(self.metadata),
-        }
-
-
-@dataclass(slots=True)
-class Citation:
-    citation_id: str
-    citation_type: CitationType
-    source: SourceDescriptor
-    label: str
-    locator: Optional[str] = None
-    excerpt: Optional[str] = None
-    field_path: Optional[str] = None
-    value: Any = None
-    confidence: Decimal = DEFAULT_EXPLANATION_CONFIDENCE
-    relevance: Decimal = ONE
-    support_direction: SupportDirection = SupportDirection.SUPPORTS
-    created_at: datetime = field(default_factory=utcnow)
-    metadata: dict[str, Any] = field(default_factory=dict)
-
-    @property
-    def rank_score(self) -> Decimal:
-        direction_weight = {
-            SupportDirection.SUPPORTS: Decimal("1.00"),
-            SupportDirection.PARTIALLY_SUPPORTS: Decimal("0.80"),
-            SupportDirection.NEUTRAL: Decimal("0.60"),
-            SupportDirection.CONTRADICTS: Decimal("0.75"),
-            SupportDirection.UNKNOWN: Decimal("0.50"),
-        }[self.support_direction]
-
-        return weighted_mean(
-            (
-                (self.source.composite_score, Decimal("0.45")),
-                (self.confidence, Decimal("0.25")),
-                (self.relevance, Decimal("0.20")),
-                (direction_weight, Decimal("0.10")),
-            )
-        )
-
-    def to_dict(self) -> dict[str, Any]:
-        return {
-            "citation_id": self.citation_id,
-            "citation_type": self.citation_type.value,
-            "source": self.source.to_dict(),
-            "label": self.label,
-            "locator": self.locator,
-            "excerpt": self.excerpt,
-            "field_path": self.field_path,
-            "value": serialize_value(self.value),
-            "confidence": str(clamp_score(self.confidence)),
-            "relevance": str(clamp_score(self.relevance)),
-            "support_direction": self.support_direction.value,
-            "rank_score": str(self.rank_score),
-            "created_at": self.created_at.isoformat(),
-            "metadata": serialize_value(self.metadata),
-        }
-
 
 # ============================================================
-# SECTION 05 - CLAIMS, SUPPORT, AND CONFLICTS
+# SECTION 08 - CLAIM CLASSIFIER
 # ============================================================
 
-@dataclass(slots=True)
-class Claim:
-    claim_id: str
-    statement: str
-    claim_type: ClaimType
-    field_path: Optional[str] = None
-    value: Any = None
-    unit: Optional[str] = None
-    currency_code: Optional[str] = None
-    confidence: Decimal = DEFAULT_EXPLANATION_CONFIDENCE
-    effective_at: Optional[datetime] = None
-    metadata: dict[str, Any] = field(default_factory=dict)
-
-    def to_dict(self) -> dict[str, Any]:
-        return {
-            "claim_id": self.claim_id,
-            "statement": self.statement,
-            "claim_type": self.claim_type.value,
-            "field_path": self.field_path,
-            "value": serialize_value(self.value),
-            "unit": self.unit,
-            "currency_code": self.currency_code,
-            "confidence": str(clamp_score(self.confidence)),
-            "effective_at": isoformat_or_none(self.effective_at),
-            "metadata": serialize_value(self.metadata),
-        }
-
-
-@dataclass(slots=True)
-class ClaimSupport:
-    claim_id: str
-    citation_id: str
-    direction: SupportDirection
-    strength: Decimal
-    rationale: str
-    metadata: dict[str, Any] = field(default_factory=dict)
-
-    def to_dict(self) -> dict[str, Any]:
-        return {
-            "claim_id": self.claim_id,
-            "citation_id": self.citation_id,
-            "direction": self.direction.value,
-            "strength": str(clamp_score(self.strength)),
-            "rationale": self.rationale,
-            "metadata": serialize_value(self.metadata),
-        }
-
-
-@dataclass(slots=True)
-class SourceConflict:
-    conflict_id: str
-    field_path: Optional[str]
-    claim_id: Optional[str]
-    source_ids: list[str]
-    citation_ids: list[str]
-    values: list[Any]
-    disagreement_score: Decimal
-    status: ConflictResolutionStatus = ConflictResolutionStatus.UNRESOLVED
-    winning_source_id: Optional[str] = None
-    winning_value: Any = None
-    resolution_reason: Optional[str] = None
-    resolved_by: Optional[str] = None
-    resolved_at: Optional[datetime] = None
-    metadata: dict[str, Any] = field(default_factory=dict)
-
-    @property
-    def severity_label(self) -> str:
-        score = clamp_score(self.disagreement_score)
-        if score >= Decimal("0.80"):
-            return "critical"
-        if score >= Decimal("0.60"):
-            return "high"
-        if score >= Decimal("0.35"):
-            return "moderate"
-        if score > ZERO:
-            return "low"
-        return "none"
-
-    def to_dict(self) -> dict[str, Any]:
-        return {
-            "conflict_id": self.conflict_id,
-            "field_path": self.field_path,
-            "claim_id": self.claim_id,
-            "source_ids": list(self.source_ids),
-            "citation_ids": list(self.citation_ids),
-            "values": serialize_value(self.values),
-            "disagreement_score": str(clamp_score(self.disagreement_score)),
-            "severity_label": self.severity_label,
-            "status": self.status.value,
-            "winning_source_id": self.winning_source_id,
-            "winning_value": serialize_value(self.winning_value),
-            "resolution_reason": self.resolution_reason,
-            "resolved_by": self.resolved_by,
-            "resolved_at": isoformat_or_none(self.resolved_at),
-            "metadata": serialize_value(self.metadata),
-        }
-
-
-# ============================================================
-# SECTION 06 - LINEAGE GRAPH CONTRACTS
-# ============================================================
-
-@dataclass(slots=True)
-class LineageNode:
-    node_id: str
-    node_type: LineageNodeType
-    label: str
-    entity_id: Optional[str] = None
-    field_path: Optional[str] = None
-    payload_hash: Optional[str] = None
-    created_at: Optional[datetime] = None
-    metadata: dict[str, Any] = field(default_factory=dict)
-
-    def to_dict(self) -> dict[str, Any]:
-        return {
-            "node_id": self.node_id,
-            "node_type": self.node_type.value,
-            "label": self.label,
-            "entity_id": self.entity_id,
-            "field_path": self.field_path,
-            "payload_hash": self.payload_hash,
-            "created_at": isoformat_or_none(self.created_at),
-            "metadata": serialize_value(self.metadata),
-        }
-
-
-@dataclass(slots=True)
-class LineageEdge:
-    edge_id: str
-    source_node_id: str
-    target_node_id: str
-    edge_type: LineageEdgeType
-    transformation: Optional[str] = None
-    confidence: Decimal = DEFAULT_EXPLANATION_CONFIDENCE
-    metadata: dict[str, Any] = field(default_factory=dict)
-
-    def to_dict(self) -> dict[str, Any]:
-        return {
-            "edge_id": self.edge_id,
-            "source_node_id": self.source_node_id,
-            "target_node_id": self.target_node_id,
-            "edge_type": self.edge_type.value,
-            "transformation": self.transformation,
-            "confidence": str(clamp_score(self.confidence)),
-            "metadata": serialize_value(self.metadata),
-        }
-
-
-@dataclass(slots=True)
-class LineageGraph:
-    nodes: dict[str, LineageNode] = field(default_factory=dict)
-    edges: dict[str, LineageEdge] = field(default_factory=dict)
-
-    def add_node(self, node: LineageNode) -> None:
-        self.nodes[node.node_id] = node
-
-    def add_edge(self, edge: LineageEdge) -> None:
-        if edge.source_node_id not in self.nodes:
-            raise ValueError(f"unknown lineage source node: {edge.source_node_id}")
-        if edge.target_node_id not in self.nodes:
-            raise ValueError(f"unknown lineage target node: {edge.target_node_id}")
-        self.edges[edge.edge_id] = edge
-
-    def parents(self, node_id: str) -> list[LineageNode]:
-        parent_ids = [
-            edge.source_node_id
-            for edge in self.edges.values()
-            if edge.target_node_id == node_id
-        ]
-        return [self.nodes[parent_id] for parent_id in parent_ids if parent_id in self.nodes]
-
-    def children(self, node_id: str) -> list[LineageNode]:
-        child_ids = [
-            edge.target_node_id
-            for edge in self.edges.values()
-            if edge.source_node_id == node_id
-        ]
-        return [self.nodes[child_id] for child_id in child_ids if child_id in self.nodes]
-
-    def ancestors(
+class ClaimClassifier:
+    def classify_claim(
         self,
-        node_id: str,
-        *,
-        maximum_depth: int = DEFAULT_MAX_LINEAGE_DEPTH,
-    ) -> list[LineageNode]:
-        visited: set[str] = set()
-        output: list[LineageNode] = []
-        frontier: list[tuple[str, int]] = [(node_id, 0)]
+        claim: str,
+    ) -> tuple[str, bool, str | None, str]:
+        key = normalize_key(claim)
 
-        while frontier:
-            current_id, depth = frontier.pop(0)
-            if depth >= maximum_depth:
+        if key in PUBLIC_RECORD_SUPPORTED_CLAIMS:
+            return (
+                ClaimSupportStatus.SUPPORTED.value,
+                True,
+                RequiredSourceType.PUBLIC_RECORDS.value,
+                PUBLIC_RECORD_SUPPORTED_CLAIMS[key],
+            )
+
+        if key in PUBLIC_RECORD_UNSUPPORTED_CLAIMS:
+            required = FUTURE_REQUIRED_SOURCES.get(key)
+
+            if "valuation" in key or "market_value" in key:
+                status = ClaimSupportStatus.REQUIRES_VALUATION_ENGINE.value
+            else:
+                status = ClaimSupportStatus.REQUIRES_AUTHORIZED_SOURCE.value
+
+            return (
+                status,
+                False,
+                required,
+                PUBLIC_RECORD_UNSUPPORTED_CLAIMS[key],
+            )
+
+        if any(field in key for field in ["listing", "mls", "under_contract", "pending"]):
+            return (
+                ClaimSupportStatus.REQUIRES_AUTHORIZED_SOURCE.value,
+                False,
+                RequiredSourceType.AUTHORIZED_LISTING_FEED.value,
+                "This claim requires an authorized listing source and cannot be proven by public records alone.",
+            )
+
+        if any(field in key for field in ["value", "valuation", "estimate", "price_forecast"]):
+            return (
+                ClaimSupportStatus.REQUIRES_VALUATION_ENGINE.value,
+                False,
+                RequiredSourceType.VALUATION_ENGINE.value,
+                "This claim requires valuation logic, comparable sales, source-backed inputs, and confidence metadata.",
+            )
+
+        return (
+            ClaimSupportStatus.PARTIAL.value,
+            False,
+            RequiredSourceType.MANUAL_REVIEW.value,
+            "This claim requires source classification or manual review before support can be determined.",
+        )
+
+
+# ============================================================
+# SECTION 09 - SOURCE EXTRACTOR
+# ============================================================
+
+class SourceExtractor:
+    def extract_sources(self, profile_payload: Mapping[str, Any]) -> list[dict[str, Any]]:
+        sources: list[dict[str, Any]] = []
+
+        self.extract_from_facts(profile_payload, sources)
+        self.extract_from_sections(profile_payload, sources)
+        self.extract_from_raw_public_records(profile_payload, sources)
+
+        return self.deduplicate_sources(sources)
+
+    def extract_from_facts(
+        self,
+        profile_payload: Mapping[str, Any],
+        sources: list[dict[str, Any]],
+    ) -> None:
+        facts = profile_payload.get("facts") or []
+
+        if not isinstance(facts, Sequence) or isinstance(facts, (str, bytes)):
+            return
+
+        for fact in facts:
+            fact_payload = object_to_dict(fact)
+
+            if not isinstance(fact_payload, Mapping):
                 continue
 
-            for parent in self.parents(current_id):
-                if parent.node_id in visited:
-                    continue
-                visited.add(parent.node_id)
-                output.append(parent)
-                frontier.append((parent.node_id, depth + 1))
+            for source in fact_payload.get("source_references") or []:
+                source_payload = object_to_dict(source)
 
-        return output
+                if isinstance(source_payload, Mapping):
+                    sources.append(dict(source_payload))
 
-    def trace(
+    def extract_from_sections(
         self,
-        node_id: str,
-        *,
-        maximum_depth: int = DEFAULT_MAX_LINEAGE_DEPTH,
-    ) -> dict[str, Any]:
-        if node_id not in self.nodes:
-            raise ValueError(f"unknown lineage node: {node_id}")
-
-        ancestors = self.ancestors(node_id, maximum_depth=maximum_depth)
-        ancestor_ids = {node.node_id for node in ancestors}
-        ancestor_ids.add(node_id)
-
-        edges = [
-            edge
-            for edge in self.edges.values()
-            if edge.source_node_id in ancestor_ids
-            and edge.target_node_id in ancestor_ids
+        profile_payload: Mapping[str, Any],
+        sources: list[dict[str, Any]],
+    ) -> None:
+        section_names = [
+            "parcel_identity",
+            "tax_assessment_context",
+            "property_tax_context",
+            "gis_context",
+            "modiv_context",
+            "building_facts",
+            "owner_references",
+            "sale_history_references",
+            "county_clerk_references",
         ]
 
-        return {
-            "target": self.nodes[node_id].to_dict(),
-            "ancestors": [node.to_dict() for node in ancestors],
-            "edges": [edge.to_dict() for edge in edges],
-        }
+        for section_name in section_names:
+            section = profile_payload.get(section_name)
 
-    def to_dict(self) -> dict[str, Any]:
-        return {
-            "nodes": [node.to_dict() for node in self.nodes.values()],
-            "edges": [edge.to_dict() for edge in self.edges.values()],
-        }
+            if isinstance(section, Mapping):
+                for source in section.get("sources") or []:
+                    source_payload = object_to_dict(source)
 
+                    if isinstance(source_payload, Mapping):
+                        sources.append(dict(source_payload))
 
-# ============================================================
-# SECTION 07 - EXPLANATION OPTIONS AND OUTPUTS
-# ============================================================
+            if isinstance(section, Sequence) and not isinstance(section, (str, bytes)):
+                for item in section:
+                    item_payload = object_to_dict(item)
 
-@dataclass(slots=True)
-class ExplanationOptions:
-    audience: ExplanationAudience = ExplanationAudience.CONSUMER
-    depth: ExplanationDepth = ExplanationDepth.STANDARD
-    tone: ExplanationTone = ExplanationTone.PROFESSIONAL
-    include_sources: bool = True
-    include_conflicts: bool = True
-    include_confidence: bool = True
-    include_lineage: bool = False
-    include_limitations: bool = True
-    max_citations: int = DEFAULT_MAX_CITATIONS
-    max_supporting_facts: int = DEFAULT_MAX_SUPPORTING_FACTS
-    max_conflicts: int = DEFAULT_MAX_CONFLICTS
-    redact_internal_metadata: bool = True
-    currency_code: str = "USD"
-    locale: str = "en-US"
+                    if not isinstance(item_payload, Mapping):
+                        continue
 
+                    for source in item_payload.get("sources") or []:
+                        source_payload = object_to_dict(source)
 
-@dataclass(slots=True)
-class ExplanationSection:
-    section_id: str
-    title: str
-    narrative: str
-    claims: list[Claim] = field(default_factory=list)
-    citations: list[Citation] = field(default_factory=list)
-    conflicts: list[SourceConflict] = field(default_factory=list)
-    confidence: Optional[Decimal] = None
-    metadata: dict[str, Any] = field(default_factory=dict)
+                        if isinstance(source_payload, Mapping):
+                            sources.append(dict(source_payload))
 
-    def to_dict(self) -> dict[str, Any]:
-        return {
-            "section_id": self.section_id,
-            "title": self.title,
-            "narrative": self.narrative,
-            "claims": [claim.to_dict() for claim in self.claims],
-            "citations": [citation.to_dict() for citation in self.citations],
-            "conflicts": [conflict.to_dict() for conflict in self.conflicts],
-            "confidence": str(self.confidence) if self.confidence is not None else None,
-            "metadata": serialize_value(self.metadata),
-        }
+    def extract_from_raw_public_records(
+        self,
+        profile_payload: Mapping[str, Any],
+        sources: list[dict[str, Any]],
+    ) -> None:
+        raw = profile_payload.get("raw_public_record_payload") or {}
 
+        if not isinstance(raw, Mapping):
+            return
 
-@dataclass(slots=True)
-class ExplanationReport:
-    report_id: str
-    subject_type: str
-    subject_id: str
-    title: str
-    summary: str
-    status: ExplanationStatus
-    confidence: Decimal
-    sections: list[ExplanationSection]
-    citations: list[Citation]
-    claims: list[Claim]
-    conflicts: list[SourceConflict]
-    limitations: list[str]
-    lineage: Optional[LineageGraph]
-    generated_at: datetime
-    fingerprint: str
-    metadata: dict[str, Any] = field(default_factory=dict)
+        for source in raw.get("sources") or []:
+            source_payload = object_to_dict(source)
 
-    def to_dict(self) -> dict[str, Any]:
-        return {
-            "report_id": self.report_id,
-            "subject_type": self.subject_type,
-            "subject_id": self.subject_id,
-            "title": self.title,
-            "summary": self.summary,
-            "status": self.status.value,
-            "confidence": str(clamp_score(self.confidence)),
-            "sections": [section.to_dict() for section in self.sections],
-            "citations": [citation.to_dict() for citation in self.citations],
-            "claims": [claim.to_dict() for claim in self.claims],
-            "conflicts": [conflict.to_dict() for conflict in self.conflicts],
-            "limitations": list(self.limitations),
-            "lineage": self.lineage.to_dict() if self.lineage else None,
-            "generated_at": self.generated_at.isoformat(),
-            "fingerprint": self.fingerprint,
-            "metadata": serialize_value(self.metadata),
-        }
+            if isinstance(source_payload, Mapping):
+                sources.append(dict(source_payload))
+
+    @staticmethod
+    def deduplicate_sources(
+        sources: list[dict[str, Any]],
+    ) -> list[dict[str, Any]]:
+        seen: set[str] = set()
+        result: list[dict[str, Any]] = []
+
+        for source in sources:
+            key = stable_hash(source)
+
+            if key in seen:
+                continue
+
+            seen.add(key)
+            result.append(source)
+
+        return result
 
 
 # ============================================================
-# SECTION 08 - SOURCE RANKING
+# SECTION 10 - SOURCE EXPLANATION BUILDER
 # ============================================================
 
-class SourceRanker:
-    AUTHORITY_WEIGHT: Mapping[SourceAuthority, Decimal] = {
-        SourceAuthority.PRIMARY: Decimal("1.00"),
-        SourceAuthority.OFFICIAL: Decimal("0.95"),
-        SourceAuthority.AUTHORITATIVE: Decimal("0.90"),
-        SourceAuthority.SECONDARY: Decimal("0.70"),
-        SourceAuthority.DERIVED: Decimal("0.60"),
-        SourceAuthority.USER_SUPPLIED: Decimal("0.50"),
-        SourceAuthority.UNKNOWN: Decimal("0.40"),
-    }
+class SourceExplanationBuilder:
+    def __init__(
+        self,
+        capability_registry: SourceCapabilityRegistry | None = None,
+    ) -> None:
+        self.capability_registry = capability_registry or SourceCapabilityRegistry()
 
-    CATEGORY_WEIGHT: Mapping[SourceCategory, Decimal] = {
-        SourceCategory.DEED: Decimal("1.00"),
-        SourceCategory.COUNTY: Decimal("0.96"),
-        SourceCategory.TAX_ASSESSOR: Decimal("0.95"),
-        SourceCategory.MUNICIPAL: Decimal("0.93"),
-        SourceCategory.STATE: Decimal("0.93"),
-        SourceCategory.FEDERAL: Decimal("0.93"),
-        SourceCategory.MLS: Decimal("0.90"),
-        SourceCategory.GEOSPATIAL: Decimal("0.86"),
-        SourceCategory.PUBLIC_RECORD: Decimal("0.85"),
-        SourceCategory.PROPERTY_PROVIDER: Decimal("0.72"),
-        SourceCategory.BROKER: Decimal("0.70"),
-        SourceCategory.MANUAL_REVIEW: Decimal("0.88"),
-        SourceCategory.INTERNAL: Decimal("0.75"),
-        SourceCategory.MODEL: Decimal("0.65"),
-        SourceCategory.DERIVED: Decimal("0.62"),
-        SourceCategory.USER: Decimal("0.50"),
-        SourceCategory.OTHER: Decimal("0.45"),
-    }
+    def build_source_explanations(
+        self,
+        sources: Sequence[Mapping[str, Any]],
+    ) -> list[SourceExplanation]:
+        explanations: list[SourceExplanation] = []
 
-    def score(self, source: SourceDescriptor) -> Decimal:
-        return weighted_mean(
-            (
-                (source.reliability, Decimal("0.25")),
-                (source.quality, Decimal("0.20")),
-                (source.freshness, Decimal("0.15")),
-                (self.AUTHORITY_WEIGHT[source.authority], Decimal("0.20")),
-                (self.CATEGORY_WEIGHT[source.category], Decimal("0.20")),
+        for source in sources:
+            source_category = self.classify_source_category(source)
+            capability = self.capability_registry.get(source_category)
+            source_name = safe_string(
+                source.get("source_name")
+                or source.get("name")
+                or source.get("connector_name")
+                or source.get("connector")
+                or source_category
             )
+            confidence = clamp_confidence(source.get("confidence") or 0.0)
+
+            explanation = (
+                f"{source_name} can support {', '.join(capability.can_support) or 'classified source facts'}; "
+                f"it cannot support {', '.join(capability.cannot_support) or 'unsupported claims'}."
+            )
+
+            explanations.append(
+                SourceExplanation(
+                    source_name=source_name,
+                    source_category=source_category,
+                    source_authority=safe_string(
+                        source.get("source_authority")
+                        or source.get("authority")
+                        or "unknown"
+                    ),
+                    supported_claims=capability.can_support,
+                    unsupported_claims=capability.cannot_support,
+                    limitations=capability.limitations,
+                    confidence=confidence,
+                    retrieved_at=source.get("retrieved_at"),
+                    record_id=source.get("record_id") or source.get("id"),
+                    source_url=source.get("source_url") or source.get("url"),
+                    raw_payload_hash=source.get("raw_payload_hash")
+                    or stable_hash(source),
+                    explanation=explanation,
+                    metadata={
+                        "required_future_sources": capability.required_future_sources,
+                    },
+                )
+            )
+
+        return explanations
+
+    @staticmethod
+    def classify_source_category(source: Mapping[str, Any]) -> str:
+        source_type = normalize_key(
+            source.get("source_type")
+            or source.get("type")
+            or source.get("connector_name")
+            or source.get("connector")
+            or source.get("source_name")
         )
 
-    def rank(self, sources: Iterable[SourceDescriptor]) -> list[SourceDescriptor]:
-        return sorted(
-            sources,
-            key=lambda source: (
-                self.score(source),
-                source.source_name,
-                source.source_id,
-            ),
-            reverse=True,
-        )
+        if "address" in source_type:
+            return SourceCategory.ADDRESS_INTELLIGENCE.value
+
+        if "tax" in source_type:
+            return SourceCategory.TAX_BOARD.value
+
+        if "clerk" in source_type or "deed" in source_type or "document" in source_type:
+            return SourceCategory.COUNTY_CLERK.value
+
+        if "gis" in source_type:
+            return SourceCategory.GIS.value
+
+        if "modiv" in source_type:
+            return SourceCategory.MODIV.value
+
+        if source_type in {"mls", "reso", "idx", "broker_feed", "authorized_listing_feed"}:
+            return SourceCategory.AUTHORIZED_LISTING_FEED.value
+
+        if "valuation" in source_type:
+            return SourceCategory.VALUATION_ENGINE.value
+
+        if "public" in source_type:
+            return SourceCategory.PUBLIC_RECORD.value
+
+        return SourceCategory.UNKNOWN.value
 
 
 # ============================================================
-# SECTION 09 - CITATION BUILDER
+# SECTION 11 - CLAIM EXPLANATION BUILDER
 # ============================================================
 
-class CitationBuilder:
+class ClaimExplanationBuilder:
+    def __init__(
+        self,
+        classifier: ClaimClassifier | None = None,
+    ) -> None:
+        self.classifier = classifier or ClaimClassifier()
+
+    def build_claim_explanations(
+        self,
+        profile_payload: Mapping[str, Any],
+        source_explanations: Sequence[SourceExplanation],
+    ) -> list[ClaimExplanation]:
+        claims = self.collect_claims(profile_payload)
+
+        explanations: list[ClaimExplanation] = []
+
+        available_source_names = [
+            source.source_name
+            for source in source_explanations
+        ]
+
+        for claim in claims:
+            status, public_support, required_source, explanation = (
+                self.classifier.classify_claim(claim)
+            )
+
+            explanations.append(
+                ClaimExplanation(
+                    claim=claim,
+                    status=status,
+                    explanation=explanation,
+                    can_public_records_support=public_support,
+                    required_source=required_source,
+                    source_names=available_source_names if public_support else [],
+                    confidence=self.claim_confidence(
+                        claim,
+                        profile_payload,
+                        public_support=public_support,
+                    ),
+                    severity=self.claim_severity(status),
+                    manual_review_required=(
+                        status
+                        in {
+                            ClaimSupportStatus.REQUIRES_MANUAL_REVIEW.value,
+                            ClaimSupportStatus.PARTIAL.value,
+                        }
+                    ),
+                )
+            )
+
+        return explanations
+
+    @staticmethod
+    def collect_claims(profile_payload: Mapping[str, Any]) -> list[str]:
+        claims = list(PUBLIC_RECORD_SUPPORTED_CLAIMS.keys())
+        claims.extend(PUBLIC_RECORD_UNSUPPORTED_CLAIMS.keys())
+
+        facts = profile_payload.get("facts") or []
+
+        if isinstance(facts, Sequence) and not isinstance(facts, (str, bytes)):
+            for fact in facts:
+                fact_payload = object_to_dict(fact)
+
+                if isinstance(fact_payload, Mapping):
+                    field_name = safe_string(
+                        fact_payload.get("field_name")
+                        or fact_payload.get("field_path")
+                    )
+
+                    if field_name:
+                        claims.append(normalize_key(field_name))
+
+        return list(dict.fromkeys(claims))
+
+    @staticmethod
+    def claim_confidence(
+        claim: str,
+        profile_payload: Mapping[str, Any],
+        *,
+        public_support: bool,
+    ) -> float:
+        if not public_support:
+            return 0.0
+
+        flattened = flatten_mapping(profile_payload)
+        claim_key = normalize_key(claim)
+
+        for key, value in flattened.items():
+            if claim_key in normalize_key(key) and value not in (None, "", [], {}):
+                return 0.70
+
+        return 0.25
+
+    @staticmethod
+    def claim_severity(status: str) -> str:
+        if status in {
+            ClaimSupportStatus.UNSUPPORTED.value,
+            ClaimSupportStatus.REQUIRES_AUTHORIZED_SOURCE.value,
+            ClaimSupportStatus.REQUIRES_VALUATION_ENGINE.value,
+        }:
+            return ExplanationSeverity.WARNING.value
+
+        if status == ClaimSupportStatus.UNAVAILABLE.value:
+            return ExplanationSeverity.INFO.value
+
+        if status == ClaimSupportStatus.REQUIRES_MANUAL_REVIEW.value:
+            return ExplanationSeverity.WARNING.value
+
+        return ExplanationSeverity.INFO.value
+
+
+# ============================================================
+# SECTION 12 - UNAVAILABLE DATA EXPLANATION BUILDER
+# ============================================================
+
+class UnavailableDataExplanationBuilder:
     def build(
         self,
-        *,
-        source: SourceDescriptor,
-        label: Optional[str] = None,
-        citation_type: Optional[CitationType] = None,
-        locator: Optional[str] = None,
-        excerpt: Optional[str] = None,
-        field_path: Optional[str] = None,
-        value: Any = None,
-        confidence: Any = DEFAULT_EXPLANATION_CONFIDENCE,
-        relevance: Any = ONE,
-        support_direction: SupportDirection = SupportDirection.SUPPORTS,
-        metadata: Optional[Mapping[str, Any]] = None,
-    ) -> Citation:
-        resolved_type = citation_type or self._infer_type(source)
-        resolved_label = label or self._default_label(source)
+        profile_payload: Mapping[str, Any],
+    ) -> list[UnavailableDataExplanation]:
+        unavailable = []
 
-        citation_id = stable_hash(
-            {
-                "source_id": source.source_id,
-                "citation_type": resolved_type.value,
-                "locator": locator,
-                "field_path": field_path,
-                "value": serialize_value(value),
-                "support_direction": support_direction.value,
-            }
-        )[:24]
+        unavailable.extend(self.from_unavailable_fields(profile_payload))
+        unavailable.extend(self.from_required_listing_fields(profile_payload))
+        unavailable.extend(self.from_required_valuation_fields(profile_payload))
 
-        return Citation(
-            citation_id=citation_id,
-            citation_type=resolved_type,
-            source=source,
-            label=resolved_label,
-            locator=locator,
-            excerpt=normalize_text(excerpt) or None,
-            field_path=field_path,
-            value=value,
-            confidence=clamp_score(confidence),
-            relevance=clamp_score(relevance),
-            support_direction=support_direction,
-            metadata=dict(metadata or {}),
-        )
+        return self.deduplicate(unavailable)
 
-    @staticmethod
-    def _infer_type(source: SourceDescriptor) -> CitationType:
-        if source.source_url:
-            return CitationType.URL
-        if source.document_name:
-            return CitationType.DOCUMENT
-        if source.dataset_name:
-            return CitationType.DATASET
-        if source.category == SourceCategory.MODEL:
-            return CitationType.MODEL
-        if source.category == SourceCategory.MANUAL_REVIEW:
-            return CitationType.HUMAN_REVIEW
-        return CitationType.RECORD
-
-    @staticmethod
-    def _default_label(source: SourceDescriptor) -> str:
-        parts = [source.source_name]
-        if source.record_type:
-            parts.append(source.record_type)
-        if source.record_id:
-            parts.append(source.record_id)
-        return " - ".join(parts)
-
-
-# ============================================================
-# SECTION 10 - CLAIM SUPPORT EVALUATION
-# ============================================================
-
-class ClaimSupportEvaluator:
-    def evaluate(
+    def from_unavailable_fields(
         self,
-        claim: Claim,
-        citation: Citation,
-    ) -> ClaimSupport:
-        direction = citation.support_direction
+        profile_payload: Mapping[str, Any],
+    ) -> list[UnavailableDataExplanation]:
+        fields = profile_payload.get("unavailable_fields") or []
+        results: list[UnavailableDataExplanation] = []
 
-        if direction == SupportDirection.UNKNOWN:
-            direction = self._infer_direction(claim.value, citation.value)
+        if not isinstance(fields, Sequence) or isinstance(fields, (str, bytes)):
+            return results
 
-        strength = weighted_mean(
-            (
-                (citation.confidence, Decimal("0.35")),
-                (citation.relevance, Decimal("0.30")),
-                (citation.source.composite_score, Decimal("0.35")),
+        for field_item in fields:
+            payload = object_to_dict(field_item)
+
+            if not isinstance(payload, Mapping):
+                continue
+
+            field_name = safe_string(payload.get("field_name") or "unknown_field")
+            field_path = safe_string(payload.get("field_path") or field_name)
+            required_source = payload.get("required_source")
+
+            results.append(
+                UnavailableDataExplanation(
+                    field_name=field_name,
+                    field_path=field_path,
+                    reason=safe_string(
+                        payload.get("reason")
+                        or "Field is unavailable from current source set."
+                    ),
+                    required_source=required_source,
+                    can_public_records_support=bool(
+                        payload.get("can_public_records_support", False)
+                    ),
+                    manual_review_required=bool(
+                        payload.get("manual_review_required", False)
+                    ),
+                    severity=safe_string(
+                        payload.get("severity") or ExplanationSeverity.INFO.value
+                    ),
+                    explanation=self.explain_unavailable_field(
+                        field_path,
+                        required_source,
+                    ),
+                    metadata=dict(payload.get("metadata") or {}),
+                )
             )
-        )
 
-        rationale = self._rationale(claim, citation, direction, strength)
+        return results
 
-        return ClaimSupport(
-            claim_id=claim.claim_id,
-            citation_id=citation.citation_id,
-            direction=direction,
-            strength=strength,
-            rationale=rationale,
+    def from_required_listing_fields(
+        self,
+        profile_payload: Mapping[str, Any],
+    ) -> list[UnavailableDataExplanation]:
+        results: list[UnavailableDataExplanation] = []
+
+        for field_name, explanation in PUBLIC_RECORD_UNSUPPORTED_CLAIMS.items():
+            if field_name not in FUTURE_REQUIRED_SOURCES:
+                continue
+
+            if "listing" not in field_name and "contract" not in field_name and "pending" not in field_name and "mls" not in field_name:
+                continue
+
+            results.append(
+                UnavailableDataExplanation(
+                    field_name=field_name,
+                    field_path=f"listing.{field_name}",
+                    reason=explanation,
+                    required_source=FUTURE_REQUIRED_SOURCES.get(field_name),
+                    can_public_records_support=False,
+                    manual_review_required=False,
+                    severity=ExplanationSeverity.WARNING.value,
+                    explanation=(
+                        f"{field_name} cannot be produced from public records alone. "
+                        f"Required source: {FUTURE_REQUIRED_SOURCES.get(field_name)}."
+                    ),
+                )
+            )
+
+        return results
+
+    def from_required_valuation_fields(
+        self,
+        profile_payload: Mapping[str, Any],
+    ) -> list[UnavailableDataExplanation]:
+        valuation = profile_payload.get("valuation_readiness") or {}
+
+        if not isinstance(valuation, Mapping):
+            valuation = {}
+
+        if valuation.get("ready") is True and valuation.get("estimate_allowed") is True:
+            return []
+
+        fields = [
+            "market_value_estimate",
+            "estimate_low",
+            "estimate_high",
+            "confidence_band",
+            "comparable_sales_adjustment",
+        ]
+
+        results = []
+
+        for field_name in fields:
+            results.append(
+                UnavailableDataExplanation(
+                    field_name=field_name,
+                    field_path=f"valuation.{field_name}",
+                    reason=(
+                        "Valuation output is unavailable until valuation inputs, "
+                        "comparable sales, model logic, and confidence calibration are connected."
+                    ),
+                    required_source="valuation_engine_and_comparable_sales",
+                    can_public_records_support=False,
+                    manual_review_required=False,
+                    severity=ExplanationSeverity.WARNING.value,
+                    explanation=(
+                        "Aussem1 must not fabricate valuation output. "
+                        "The system can explain valuation readiness but cannot produce "
+                        "market value without the valuation engine and comparable-sales data."
+                    ),
+                )
+            )
+
+        return results
+
+    @staticmethod
+    def explain_unavailable_field(
+        field_path: str,
+        required_source: Any,
+    ) -> str:
+        field_key = normalize_key(field_path)
+
+        if "listing" in field_key or "mls" in field_key:
+            return (
+                f"{field_path} requires an authorized listing feed. "
+                "Public records cannot prove current listing status."
+            )
+
+        if "valuation" in field_key or "estimate" in field_key:
+            return (
+                f"{field_path} requires valuation logic and comparable-sales data. "
+                "Assessment cannot be treated as market value."
+            )
+
+        if "tax" in field_key or "assessment" in field_key:
+            return (
+                f"{field_path} requires tax-board or assessment public records."
+            )
+
+        if "gis" in field_key:
+            return (
+                f"{field_path} requires GIS source context. GIS is not a legal survey."
+            )
+
+        if "modiv" in field_key:
+            return (
+                f"{field_path} requires NJ MOD-IV style public-record context."
+            )
+
+        return (
+            f"{field_path} is unavailable from the current source set. "
+            f"Required source: {required_source or 'source-backed public record or manual review'}."
         )
 
     @staticmethod
-    def _infer_direction(claim_value: Any, citation_value: Any) -> SupportDirection:
-        if claim_value is None or citation_value is None:
-            return SupportDirection.NEUTRAL
+    def deduplicate(
+        items: list[UnavailableDataExplanation],
+    ) -> list[UnavailableDataExplanation]:
+        seen: set[str] = set()
+        result: list[UnavailableDataExplanation] = []
 
-        if str(claim_value).strip().upper() == str(citation_value).strip().upper():
-            return SupportDirection.SUPPORTS
+        for item in items:
+            key = f"{item.field_path}:{item.reason}"
 
-        claim_number = ClaimSupportEvaluator._to_number(claim_value)
-        citation_number = ClaimSupportEvaluator._to_number(citation_value)
+            if key in seen:
+                continue
 
-        if claim_number is not None and citation_number is not None:
-            denominator = max(abs(claim_number), abs(citation_number), ONE)
-            relative_difference = abs(claim_number - citation_number) / denominator
-            if relative_difference <= Decimal("0.02"):
-                return SupportDirection.SUPPORTS
-            if relative_difference <= Decimal("0.10"):
-                return SupportDirection.PARTIALLY_SUPPORTS
-            return SupportDirection.CONTRADICTS
+            seen.add(key)
+            result.append(item)
 
-        return SupportDirection.CONTRADICTS
+        return result
+
+
+# ============================================================
+# SECTION 13 - MANUAL REVIEW EXPLANATION BUILDER
+# ============================================================
+
+class ManualReviewExplanationBuilder:
+    def build(
+        self,
+        profile_payload: Mapping[str, Any],
+    ) -> list[ManualReviewExplanation]:
+        items = profile_payload.get("manual_review_items") or []
+        results: list[ManualReviewExplanation] = []
+
+        if not isinstance(items, Sequence) or isinstance(items, (str, bytes)):
+            return results
+
+        for item in items:
+            payload = object_to_dict(item)
+
+            if not isinstance(payload, Mapping):
+                continue
+
+            code = safe_string(payload.get("code") or "manual_review_required")
+            message = safe_string(payload.get("message") or "Manual review is required.")
+            field_path = payload.get("field_path")
+            required_action = payload.get("required_action")
+            severity = safe_string(
+                payload.get("severity") or ExplanationSeverity.WARNING.value
+            )
+
+            results.append(
+                ManualReviewExplanation(
+                    code=code,
+                    message=message,
+                    severity=severity,
+                    field_path=field_path,
+                    required_action=required_action,
+                    why_review_is_needed=self.explain_manual_review_need(
+                        code=code,
+                        field_path=field_path,
+                        message=message,
+                    ),
+                    metadata=dict(payload.get("metadata") or {}),
+                )
+            )
+
+        return results
 
     @staticmethod
-    def _to_number(value: Any) -> Optional[Decimal]:
+    def explain_manual_review_need(
+        *,
+        code: str,
+        field_path: Any,
+        message: str,
+    ) -> str:
+        key = normalize_key(code)
+
+        if "address" in key:
+            return (
+                "Address manual review is needed because the lookup signal may be "
+                "ambiguous, incomplete, or missing jurisdiction details."
+            )
+
+        if "parcel" in key:
+            return (
+                "Parcel manual review is needed because block, lot, qualifier, "
+                "or parcel identity could not be source-confirmed."
+            )
+
+        if "confidence" in key:
+            return (
+                "Manual review is needed because the confidence level is below "
+                "production reliability threshold."
+            )
+
+        if "error" in key:
+            return (
+                "Manual review is needed because the profile contains runtime or "
+                "connector errors."
+            )
+
+        return (
+            message
+            or "Manual review is needed to prevent unsupported property claims."
+        )
+
+
+# ============================================================
+# SECTION 14 - SPECIAL EXPLANATION BUILDERS
+# ============================================================
+
+class AssessmentExplanationBuilder:
+    def build(
+        self,
+        profile_payload: Mapping[str, Any],
+    ) -> AssessmentExplanation:
+        assessment = profile_payload.get("tax_assessment_context") or {}
+
+        if not isinstance(assessment, Mapping):
+            assessment = {}
+
+        total = self.to_float(assessment.get("total_assessment"))
+        land = self.to_float(assessment.get("land_assessment"))
+        improvement = self.to_float(assessment.get("improvement_assessment"))
+        tax_year = assessment.get("tax_year")
+
+        has_assessment = any(
+            value is not None
+            for value in [
+                total,
+                land,
+                improvement,
+                tax_year,
+            ]
+        )
+
+        if has_assessment:
+            explanation = (
+                "Tax assessment is available as public-record context. "
+                "It can help describe the assessed land, improvement, and total "
+                "assessment, but it is not current market value, not a listing price, "
+                "and not an appraisal."
+            )
+        else:
+            explanation = (
+                "Tax assessment is unavailable from the current source set. "
+                "A county tax-board or assessment source is required."
+            )
+
+        return AssessmentExplanation(
+            has_assessment=has_assessment,
+            total_assessment=total,
+            land_assessment=land,
+            improvement_assessment=improvement,
+            tax_year=safe_string(tax_year) or None,
+            explanation=explanation,
+            cannot_be_used_as_market_value=True,
+        )
+
+    @staticmethod
+    def to_float(value: Any) -> float | None:
+        if value in (None, ""):
+            return None
+
         try:
-            return Decimal(str(value))
+            return float(str(value).replace("$", "").replace(",", ""))
         except Exception:
             return None
 
-    @staticmethod
-    def _rationale(
-        claim: Claim,
-        citation: Citation,
-        direction: SupportDirection,
-        strength: Decimal,
-    ) -> str:
-        source_name = citation.source.source_name
-        if direction == SupportDirection.SUPPORTS:
-            return f"{source_name} directly supports the claim with strength {strength}."
-        if direction == SupportDirection.PARTIALLY_SUPPORTS:
-            return f"{source_name} partially supports the claim with strength {strength}."
-        if direction == SupportDirection.CONTRADICTS:
-            return f"{source_name} conflicts with the claim with strength {strength}."
-        if direction == SupportDirection.NEUTRAL:
-            return f"{source_name} is relevant but does not directly establish the claim."
-        return f"Support from {source_name} could not be determined."
 
-
-# ============================================================
-# SECTION 11 - CONFLICT DETECTION AND RESOLUTION
-# ============================================================
-
-class SourceConflictDetector:
-    def detect(
+class ListingStatusExplanationBuilder:
+    def build(
         self,
-        *,
-        claim: Optional[Claim],
-        citations: Sequence[Citation],
-        disagreement_threshold: Decimal = Decimal("0.10"),
-    ) -> list[SourceConflict]:
-        grouped: MutableMapping[Optional[str], list[Citation]] = defaultdict(list)
-        for citation in citations:
-            grouped[citation.field_path].append(citation)
+        profile_payload: Mapping[str, Any],
+        source_explanations: Sequence[SourceExplanation],
+    ) -> ListingStatusExplanation:
+        has_feed = any(
+            source.source_category == SourceCategory.AUTHORIZED_LISTING_FEED.value
+            for source in source_explanations
+        )
 
-        conflicts: list[SourceConflict] = []
+        listing_context = profile_payload.get("listing_status_context") or {}
 
-        for field_path, field_citations in grouped.items():
-            usable = [
-                citation
-                for citation in field_citations
-                if citation.value is not None
-            ]
-            if len(usable) < 2:
-                continue
+        if not isinstance(listing_context, Mapping):
+            listing_context = {}
 
-            maximum_disagreement = ZERO
-            involved: set[str] = set()
-            source_ids: set[str] = set()
-            values: list[Any] = []
+        active_status = listing_context.get("active_status")
+        listing_price = listing_context.get("listing_price")
 
-            for index, left in enumerate(usable):
-                for right in usable[index + 1:]:
-                    disagreement = self._disagreement(left.value, right.value)
-                    if disagreement >= disagreement_threshold:
-                        maximum_disagreement = max(maximum_disagreement, disagreement)
-                        involved.update((left.citation_id, right.citation_id))
-                        source_ids.update((left.source.source_id, right.source.source_id))
-                        values.extend((left.value, right.value))
-
-            if not involved:
-                continue
-
-            conflict_id = stable_hash(
-                {
-                    "field_path": field_path,
-                    "claim_id": claim.claim_id if claim else None,
-                    "citation_ids": sorted(involved),
-                }
-            )[:24]
-
-            conflicts.append(
-                SourceConflict(
-                    conflict_id=conflict_id,
-                    field_path=field_path,
-                    claim_id=claim.claim_id if claim else None,
-                    source_ids=sorted(source_ids),
-                    citation_ids=sorted(involved),
-                    values=list(dict.fromkeys(str(value) for value in values)),
-                    disagreement_score=clamp_score(maximum_disagreement),
-                )
+        if has_feed:
+            explanation = (
+                "Authorized listing source appears connected. Current listing "
+                "fields may be supported only to the extent that the feed provides "
+                "them and licensing allows display."
+            )
+        else:
+            explanation = (
+                "Current listing status is not available from public records. "
+                "Aussem1 requires an authorized MLS, RESO, IDX, broker-authorized "
+                "feed, or listing-provider source before it can report active, "
+                "pending, under-contract, days-on-market, or current list price."
             )
 
-        return conflicts
-
-    @staticmethod
-    def _disagreement(left: Any, right: Any) -> Decimal:
-        try:
-            left_number = Decimal(str(left))
-            right_number = Decimal(str(right))
-            denominator = max(abs(left_number), abs(right_number), ONE)
-            return clamp_score(abs(left_number - right_number) / denominator)
-        except Exception:
-            left_text = normalize_text(left).upper()
-            right_text = normalize_text(right).upper()
-            if left_text == right_text:
-                return ZERO
-
-            left_tokens = set(left_text.split())
-            right_tokens = set(right_text.split())
-            union = left_tokens | right_tokens
-            if not union:
-                return ZERO
-            similarity = Decimal(len(left_tokens & right_tokens)) / Decimal(len(union))
-            return clamp_score(ONE - similarity)
+        return ListingStatusExplanation(
+            listing_feed_connected=has_feed,
+            active_status_supported=bool(has_feed and active_status),
+            under_contract_supported=has_feed,
+            current_price_supported=bool(has_feed and listing_price),
+            explanation=explanation,
+            required_source="authorized_listing_feed",
+        )
 
 
-class SourceConflictResolver:
-    def __init__(self, *, source_ranker: Optional[SourceRanker] = None) -> None:
-        self.source_ranker = source_ranker or SourceRanker()
-
-    def resolve(
+class ValuationExplanationBuilder:
+    def build(
         self,
-        conflict: SourceConflict,
-        citations: Sequence[Citation],
-        *,
-        minimum_margin: Decimal = Decimal("0.08"),
-    ) -> SourceConflict:
-        relevant = [
-            citation
-            for citation in citations
-            if citation.citation_id in conflict.citation_ids
-        ]
-        if not relevant:
-            return conflict
+        profile_payload: Mapping[str, Any],
+    ) -> ValuationExplanation:
+        valuation = profile_payload.get("valuation_readiness") or {}
 
-        ranked = sorted(
-            relevant,
-            key=lambda citation: citation.rank_score,
-            reverse=True,
+        if not isinstance(valuation, Mapping):
+            valuation = {}
+
+        ready = bool(valuation.get("ready", False))
+        estimate_allowed = bool(valuation.get("estimate_allowed", False))
+        available_inputs = list(valuation.get("available_inputs") or [])
+        missing_inputs = list(
+            valuation.get("required_missing_inputs")
+            or valuation.get("missing_inputs")
+            or []
         )
-        winner = ranked[0]
-        runner_up_score = ranked[1].rank_score if len(ranked) > 1 else ZERO
-        margin = winner.rank_score - runner_up_score
-
-        if margin < minimum_margin:
-            conflict.status = ConflictResolutionStatus.DEFERRED
-            conflict.resolution_reason = (
-                "No source exceeded the next-best source by the required authority margin."
-            )
-            return conflict
-
-        conflict.status = ConflictResolutionStatus.AUTO_RESOLVED
-        conflict.winning_source_id = winner.source.source_id
-        conflict.winning_value = winner.value
-        conflict.resolution_reason = (
-            f"{winner.source.source_name} ranked highest based on authority, "
-            "quality, freshness, reliability, and relevance."
-        )
-        conflict.resolved_by = "source_explanation_engine"
-        conflict.resolved_at = utcnow()
-        return conflict
-
-
-# ============================================================
-# SECTION 12 - LINEAGE BUILDER
-# ============================================================
-
-class LineageBuilder:
-    def build_for_claim(
-        self,
-        *,
-        claim: Claim,
-        citations: Sequence[Citation],
-        supports: Sequence[ClaimSupport],
-        transformations: Optional[Sequence[Mapping[str, Any]]] = None,
-        target_node_type: LineageNodeType = LineageNodeType.CLAIM,
-    ) -> LineageGraph:
-        graph = LineageGraph()
-
-        claim_node_id = f"claim:{safe_identifier(claim.claim_id)}"
-        graph.add_node(
-            LineageNode(
-                node_id=claim_node_id,
-                node_type=target_node_type,
-                label=claim.statement,
-                entity_id=claim.claim_id,
-                field_path=claim.field_path,
-                payload_hash=stable_hash(claim.to_dict()),
-                created_at=utcnow(),
-            )
+        status = safe_string(
+            valuation.get("status") or "not_ready"
         )
 
-        citation_by_id = {citation.citation_id: citation for citation in citations}
-
-        for citation in citations:
-            source_node_id = f"source:{safe_identifier(citation.source.source_id)}"
-            if source_node_id not in graph.nodes:
-                graph.add_node(
-                    LineageNode(
-                        node_id=source_node_id,
-                        node_type=LineageNodeType.SOURCE,
-                        label=citation.source.source_name,
-                        entity_id=citation.source.source_id,
-                        payload_hash=citation.source.payload_hash,
-                        created_at=citation.source.retrieved_at,
-                        metadata={
-                            "category": citation.source.category.value,
-                            "authority": citation.source.authority.value,
-                        },
-                    )
-                )
-
-            record_node_id = f"record:{safe_identifier(citation.citation_id)}"
-            graph.add_node(
-                LineageNode(
-                    node_id=record_node_id,
-                    node_type=LineageNodeType.RECORD,
-                    label=citation.label,
-                    entity_id=citation.citation_id,
-                    field_path=citation.field_path,
-                    payload_hash=stable_hash(citation.to_dict()),
-                    created_at=citation.created_at,
-                )
+        if ready and estimate_allowed:
+            explanation = (
+                "Valuation appears ready because required valuation inputs are available. "
+                "The estimate must still include confidence, source attribution, and "
+                "limitations."
+            )
+        elif available_inputs:
+            explanation = (
+                "Some valuation inputs are available, but Aussem1 must not produce a "
+                "market estimate until comparable sales, valuation model logic, and "
+                "confidence calibration are connected."
+            )
+        else:
+            explanation = (
+                "Valuation is unavailable. Public records can help prepare valuation "
+                "features, but assessment alone is not market value and cannot be "
+                "presented as an estimate."
             )
 
-            graph.add_edge(
-                LineageEdge(
-                    edge_id=stable_hash(
-                        {
-                            "source": source_node_id,
-                            "target": record_node_id,
-                            "type": LineageEdgeType.PRODUCED.value,
-                        }
-                    )[:24],
-                    source_node_id=source_node_id,
-                    target_node_id=record_node_id,
-                    edge_type=LineageEdgeType.PRODUCED,
-                    confidence=citation.source.composite_score,
-                )
-            )
-
-        transformation_nodes: list[str] = []
-        for index, transformation in enumerate(transformations or []):
-            node_id = f"transformation:{safe_identifier(transformation.get('name', index))}"
-            graph.add_node(
-                LineageNode(
-                    node_id=node_id,
-                    node_type=LineageNodeType.TRANSFORMATION,
-                    label=str(transformation.get("name", f"Transformation {index + 1}")),
-                    payload_hash=stable_hash(transformation),
-                    created_at=utcnow(),
-                    metadata=dict(transformation),
-                )
-            )
-            transformation_nodes.append(node_id)
-
-        for support in supports:
-            citation = citation_by_id.get(support.citation_id)
-            if citation is None:
-                continue
-
-            source_record_node = f"record:{safe_identifier(citation.citation_id)}"
-            edge_type = (
-                LineageEdgeType.CONTRADICTED
-                if support.direction == SupportDirection.CONTRADICTS
-                else LineageEdgeType.SUPPORTED
-            )
-
-            if transformation_nodes:
-                first = transformation_nodes[0]
-                graph.add_edge(
-                    LineageEdge(
-                        edge_id=stable_hash(
-                            {
-                                "source": source_record_node,
-                                "target": first,
-                                "type": LineageEdgeType.DERIVED_FROM.value,
-                            }
-                        )[:24],
-                        source_node_id=source_record_node,
-                        target_node_id=first,
-                        edge_type=LineageEdgeType.DERIVED_FROM,
-                        confidence=support.strength,
-                    )
-                )
-
-                for left, right in zip(transformation_nodes, transformation_nodes[1:]):
-                    graph.add_edge(
-                        LineageEdge(
-                            edge_id=stable_hash(
-                                {
-                                    "source": left,
-                                    "target": right,
-                                    "type": LineageEdgeType.TRANSFORMED_INTO.value,
-                                }
-                            )[:24],
-                            source_node_id=left,
-                            target_node_id=right,
-                            edge_type=LineageEdgeType.TRANSFORMED_INTO,
-                            confidence=support.strength,
-                        )
-                    )
-
-                graph.add_edge(
-                    LineageEdge(
-                        edge_id=stable_hash(
-                            {
-                                "source": transformation_nodes[-1],
-                                "target": claim_node_id,
-                                "type": edge_type.value,
-                            }
-                        )[:24],
-                        source_node_id=transformation_nodes[-1],
-                        target_node_id=claim_node_id,
-                        edge_type=edge_type,
-                        confidence=support.strength,
-                    )
-                )
-            else:
-                graph.add_edge(
-                    LineageEdge(
-                        edge_id=stable_hash(
-                            {
-                                "source": source_record_node,
-                                "target": claim_node_id,
-                                "type": edge_type.value,
-                            }
-                        )[:24],
-                        source_node_id=source_record_node,
-                        target_node_id=claim_node_id,
-                        edge_type=edge_type,
-                        confidence=support.strength,
-                    )
-                )
-
-        return graph
-
-
-# ============================================================
-# SECTION 13 - NARRATIVE TEMPLATES
-# ============================================================
-
-class ExplanationTemplateRegistry:
-    def __init__(self) -> None:
-        self._templates: dict[str, Callable[..., str]] = {
-            "fact": self._fact_template,
-            "valuation": self._valuation_template,
-            "market": self._market_template,
-            "risk": self._risk_template,
-            "conflict": self._conflict_template,
-            "confidence": self._confidence_template,
-        }
-
-    def render(self, template_name: str, **context: Any) -> str:
-        renderer = self._templates.get(template_name)
-        if renderer is None:
-            raise KeyError(f"unknown explanation template: {template_name}")
-        return renderer(**context)
-
-    @staticmethod
-    def _fact_template(
-        *,
-        claim: Claim,
-        citations: Sequence[Citation],
-        confidence: Decimal,
-        **_: Any,
-    ) -> str:
-        source_names = sorted({citation.source.source_name for citation in citations})
-        source_phrase = ", ".join(source_names[:3])
-        if len(source_names) > 3:
-            source_phrase += f", and {len(source_names) - 3} additional source(s)"
-
-        return sentence_join(
-            (
-                claim.statement,
-                (
-                    f"This conclusion is supported by {source_phrase}"
-                    if source_names
-                    else "No external source citation was available"
-                ),
-                f"The resulting confidence is {confidence}",
-            )
-        )
-
-    @staticmethod
-    def _valuation_template(
-        *,
-        claim: Claim,
-        citations: Sequence[Citation],
-        confidence: Decimal,
-        metadata: Optional[Mapping[str, Any]] = None,
-        **_: Any,
-    ) -> str:
-        comparable_count = (metadata or {}).get("comparable_count")
-        model_name = (metadata or {}).get("model_name")
-        parts = [claim.statement]
-
-        if model_name:
-            parts.append(f"The estimate was produced using {model_name}")
-        if comparable_count is not None:
-            parts.append(f"{comparable_count} comparable property record(s) contributed")
-        parts.append(f"Overall valuation confidence is {confidence}")
-        if citations:
-            parts.append(f"{len(citations)} source citation(s) support the estimate")
-
-        return sentence_join(parts)
-
-    @staticmethod
-    def _market_template(
-        *,
-        claim: Claim,
-        citations: Sequence[Citation],
-        confidence: Decimal,
-        **_: Any,
-    ) -> str:
-        return sentence_join(
-            (
-                claim.statement,
-                f"The market conclusion uses {len(citations)} supporting source(s)",
-                f"Confidence is {confidence}",
-            )
-        )
-
-    @staticmethod
-    def _risk_template(
-        *,
-        claim: Claim,
-        citations: Sequence[Citation],
-        confidence: Decimal,
-        **_: Any,
-    ) -> str:
-        return sentence_join(
-            (
-                claim.statement,
-                f"The risk assessment references {len(citations)} evidence source(s)",
-                f"Confidence is {confidence}",
-                "Risk scores are indicators and should not replace professional inspection, legal review, or insurance underwriting",
-            )
-        )
-
-    @staticmethod
-    def _conflict_template(
-        *,
-        conflicts: Sequence[SourceConflict],
-        **_: Any,
-    ) -> str:
-        if not conflicts:
-            return "No material source conflicts were identified."
-        unresolved = sum(
-            1
-            for conflict in conflicts
-            if conflict.status == ConflictResolutionStatus.UNRESOLVED
-        )
-        return sentence_join(
-            (
-                f"{len(conflicts)} material source conflict(s) were identified",
-                f"{unresolved} remain unresolved",
-            )
-        )
-
-    @staticmethod
-    def _confidence_template(
-        *,
-        confidence: Decimal,
-        support_count: int,
-        conflict_count: int,
-        **_: Any,
-    ) -> str:
-        return sentence_join(
-            (
-                f"Confidence is {confidence}",
-                f"{support_count} supporting item(s) were evaluated",
-                f"{conflict_count} conflict(s) were considered",
-            )
+        return ValuationExplanation(
+            valuation_available=bool(ready and estimate_allowed),
+            estimate_allowed=estimate_allowed,
+            valuation_readiness_status=status,
+            available_inputs=available_inputs,
+            missing_inputs=missing_inputs,
+            explanation=explanation,
+            required_source="valuation_engine_and_comparable_sales",
         )
 
 
 # ============================================================
-# SECTION 14 - EXPLANATION QUALITY CONTROL
-# ============================================================
-
-@dataclass(slots=True)
-class ExplanationQualityResult:
-    score: Decimal
-    complete: bool
-    warnings: list[str]
-    missing_elements: list[str]
-
-    def to_dict(self) -> dict[str, Any]:
-        return {
-            "score": str(clamp_score(self.score)),
-            "complete": self.complete,
-            "warnings": list(self.warnings),
-            "missing_elements": list(self.missing_elements),
-        }
-
-
-class ExplanationQualityChecker:
-    def evaluate(
-        self,
-        *,
-        claims: Sequence[Claim],
-        citations: Sequence[Citation],
-        conflicts: Sequence[SourceConflict],
-        report_summary: str,
-        limitations: Sequence[str],
-    ) -> ExplanationQualityResult:
-        factors: list[tuple[Decimal, Decimal]] = []
-        warnings: list[str] = []
-        missing: list[str] = []
-
-        claim_score = ONE if claims else ZERO
-        factors.append((claim_score, Decimal("0.20")))
-        if not claims:
-            missing.append("claims")
-
-        citation_score = ONE if citations else ZERO
-        factors.append((citation_score, Decimal("0.25")))
-        if not citations:
-            missing.append("citations")
-            warnings.append("The explanation contains no source citations.")
-
-        linked_claims = {
-            citation.field_path
-            for citation in citations
-            if citation.field_path
-        }
-        claim_paths = {
-            claim.field_path
-            for claim in claims
-            if claim.field_path
-        }
-        linkage_score = (
-            Decimal(len(linked_claims & claim_paths)) / Decimal(len(claim_paths))
-            if claim_paths
-            else HALF
-        )
-        factors.append((clamp_score(linkage_score), Decimal("0.20")))
-
-        summary_score = ONE if normalize_text(report_summary) else ZERO
-        factors.append((summary_score, Decimal("0.15")))
-        if summary_score == ZERO:
-            missing.append("summary")
-
-        limitations_score = ONE if limitations else Decimal("0.50")
-        factors.append((limitations_score, Decimal("0.10")))
-        if not limitations:
-            warnings.append("No limitations were disclosed.")
-
-        conflict_score = ONE
-        if conflicts:
-            resolved = sum(
-                1
-                for conflict in conflicts
-                if conflict.status
-                in {
-                    ConflictResolutionStatus.AUTO_RESOLVED,
-                    ConflictResolutionStatus.HUMAN_RESOLVED,
-                }
-            )
-            conflict_score = Decimal(resolved) / Decimal(len(conflicts))
-            if resolved < len(conflicts):
-                warnings.append("One or more source conflicts remain unresolved.")
-        factors.append((clamp_score(conflict_score), Decimal("0.10")))
-
-        score = weighted_mean(factors, default=ZERO)
-        return ExplanationQualityResult(
-            score=score,
-            complete=score >= Decimal("0.80") and not missing,
-            warnings=warnings,
-            missing_elements=missing,
-        )
-
-
-# ============================================================
-# SECTION 15 - SOURCE EXPLANATION ENGINE
+# SECTION 15 - ENTERPRISE SOURCE EXPLANATION ENGINE
 # ============================================================
 
 class SourceExplanationEngine:
-    """
-    Main orchestration service for source-grounded explanations.
-
-    Responsibilities:
-    - Register claims and citations.
-    - Evaluate support and contradiction.
-    - Detect and optionally resolve source conflicts.
-    - Rank citations.
-    - Build lineage.
-    - Generate user-facing and audit-facing narratives.
-    - Enforce explanation quality checks.
-    """
-
     def __init__(
         self,
         *,
-        source_ranker: Optional[SourceRanker] = None,
-        citation_builder: Optional[CitationBuilder] = None,
-        support_evaluator: Optional[ClaimSupportEvaluator] = None,
-        conflict_detector: Optional[SourceConflictDetector] = None,
-        conflict_resolver: Optional[SourceConflictResolver] = None,
-        lineage_builder: Optional[LineageBuilder] = None,
-        templates: Optional[ExplanationTemplateRegistry] = None,
-        quality_checker: Optional[ExplanationQualityChecker] = None,
+        source_extractor: SourceExtractor | None = None,
+        source_builder: SourceExplanationBuilder | None = None,
+        claim_builder: ClaimExplanationBuilder | None = None,
+        unavailable_builder: UnavailableDataExplanationBuilder | None = None,
+        manual_review_builder: ManualReviewExplanationBuilder | None = None,
+        assessment_builder: AssessmentExplanationBuilder | None = None,
+        listing_builder: ListingStatusExplanationBuilder | None = None,
+        valuation_builder: ValuationExplanationBuilder | None = None,
     ) -> None:
-        self.source_ranker = source_ranker or SourceRanker()
-        self.citation_builder = citation_builder or CitationBuilder()
-        self.support_evaluator = support_evaluator or ClaimSupportEvaluator()
-        self.conflict_detector = conflict_detector or SourceConflictDetector()
-        self.conflict_resolver = conflict_resolver or SourceConflictResolver(
-            source_ranker=self.source_ranker
+        self.source_extractor = source_extractor or SourceExtractor()
+        self.source_builder = source_builder or SourceExplanationBuilder()
+        self.claim_builder = claim_builder or ClaimExplanationBuilder()
+        self.unavailable_builder = (
+            unavailable_builder or UnavailableDataExplanationBuilder()
         )
-        self.lineage_builder = lineage_builder or LineageBuilder()
-        self.templates = templates or ExplanationTemplateRegistry()
-        self.quality_checker = quality_checker or ExplanationQualityChecker()
+        self.manual_review_builder = (
+            manual_review_builder or ManualReviewExplanationBuilder()
+        )
+        self.assessment_builder = (
+            assessment_builder or AssessmentExplanationBuilder()
+        )
+        self.listing_builder = (
+            listing_builder or ListingStatusExplanationBuilder()
+        )
+        self.valuation_builder = (
+            valuation_builder or ValuationExplanationBuilder()
+        )
 
-    def explain_claim(
-        self,
-        *,
-        claim: Claim,
-        citations: Sequence[Citation],
-        subject_type: str,
-        subject_id: str,
-        options: Optional[ExplanationOptions] = None,
-        transformations: Optional[Sequence[Mapping[str, Any]]] = None,
-        limitations: Optional[Sequence[str]] = None,
-        metadata: Optional[Mapping[str, Any]] = None,
-    ) -> ExplanationReport:
-        active_options = options or ExplanationOptions()
-        ranked_citations = sorted(
-            citations,
-            key=lambda citation: citation.rank_score,
-            reverse=True,
-        )[: active_options.max_citations]
+    def explain_profile(self, profile: Any) -> SourceExplanationReport:
+        profile_payload = self.normalize_profile(profile)
+        sources = self.source_extractor.extract_sources(profile_payload)
+        source_explanations = self.source_builder.build_source_explanations(sources)
+        claim_explanations = self.claim_builder.build_claim_explanations(
+            profile_payload,
+            source_explanations,
+        )
+        unavailable_data = self.unavailable_builder.build(profile_payload)
+        manual_review_explanations = self.manual_review_builder.build(
+            profile_payload
+        )
+        assessment_explanation = self.assessment_builder.build(profile_payload)
+        listing_status_explanation = self.listing_builder.build(
+            profile_payload,
+            source_explanations,
+        )
+        valuation_explanation = self.valuation_builder.build(profile_payload)
 
-        supports = [
-            self.support_evaluator.evaluate(claim, citation)
-            for citation in ranked_citations
+        supported_claims = [
+            claim.claim
+            for claim in claim_explanations
+            if claim.status == ClaimSupportStatus.SUPPORTED.value
         ]
 
-        conflicts = (
-            self.conflict_detector.detect(
-                claim=claim,
-                citations=ranked_citations,
-            )
-            if active_options.include_conflicts
-            else []
-        )
-
-        conflicts = [
-            self.conflict_resolver.resolve(conflict, ranked_citations)
-            for conflict in conflicts
-        ][: active_options.max_conflicts]
-
-        confidence = self._claim_confidence(
-            claim=claim,
-            citations=ranked_citations,
-            supports=supports,
-            conflicts=conflicts,
-        )
-
-        narrative = self._render_claim_narrative(
-            claim=claim,
-            citations=ranked_citations,
-            confidence=confidence,
-            conflicts=conflicts,
-            options=active_options,
-            metadata=metadata,
-        )
-
-        sections = self._build_sections(
-            claim=claim,
-            citations=ranked_citations,
-            conflicts=conflicts,
-            confidence=confidence,
-            narrative=narrative,
-            options=active_options,
-        )
-
-        lineage = (
-            self.lineage_builder.build_for_claim(
-                claim=claim,
-                citations=ranked_citations,
-                supports=supports,
-                transformations=transformations,
-            )
-            if active_options.include_lineage
-            else None
-        )
-
-        report_limitations = list(limitations or [])
-        if active_options.include_limitations and not report_limitations:
-            report_limitations = self._default_limitations(claim.claim_type)
-
-        summary = self._build_summary(
-            claim=claim,
-            confidence=confidence,
-            citations=ranked_citations,
-            conflicts=conflicts,
-            options=active_options,
-        )
-
-        quality = self.quality_checker.evaluate(
-            claims=[claim],
-            citations=ranked_citations,
-            conflicts=conflicts,
-            report_summary=summary,
-            limitations=report_limitations,
-        )
-
-        status = (
-            ExplanationStatus.COMPLETE
-            if quality.complete
-            else ExplanationStatus.PARTIAL
-        )
-
-        report_payload = {
-            "subject_type": subject_type,
-            "subject_id": subject_id,
-            "claim": claim.to_dict(),
-            "citations": [citation.to_dict() for citation in ranked_citations],
-            "conflicts": [conflict.to_dict() for conflict in conflicts],
-            "confidence": str(confidence),
-            "options": asdict(active_options),
-            "metadata": dict(metadata or {}),
-        }
-        fingerprint = stable_hash(report_payload)
-        report_id = fingerprint[:24]
-
-        return ExplanationReport(
-            report_id=report_id,
-            subject_type=subject_type,
-            subject_id=subject_id,
-            title=self._title_for_claim(claim),
-            summary=summary,
-            status=status,
-            confidence=confidence,
-            sections=sections,
-            citations=ranked_citations,
-            claims=[claim],
-            conflicts=conflicts,
-            limitations=report_limitations,
-            lineage=lineage,
-            generated_at=utcnow(),
-            fingerprint=fingerprint,
-            metadata={
-                **dict(metadata or {}),
-                "quality": quality.to_dict(),
-                "support": [support.to_dict() for support in supports],
-                "options": serialize_value(asdict(active_options)),
-            },
-        )
-
-    def explain_multiple_claims(
-        self,
-        *,
-        claims: Sequence[Claim],
-        citations: Sequence[Citation],
-        subject_type: str,
-        subject_id: str,
-        title: str,
-        options: Optional[ExplanationOptions] = None,
-        transformations_by_claim: Optional[
-            Mapping[str, Sequence[Mapping[str, Any]]]
-        ] = None,
-        limitations: Optional[Sequence[str]] = None,
-        metadata: Optional[Mapping[str, Any]] = None,
-    ) -> ExplanationReport:
-        active_options = options or ExplanationOptions()
-        child_reports = [
-            self.explain_claim(
-                claim=claim,
-                citations=[
-                    citation
-                    for citation in citations
-                    if (
-                        citation.field_path == claim.field_path
-                        or citation.field_path is None
-                    )
-                ],
-                subject_type=subject_type,
-                subject_id=subject_id,
-                options=active_options,
-                transformations=(transformations_by_claim or {}).get(claim.claim_id),
-                limitations=[],
-                metadata=metadata,
-            )
-            for claim in claims
-        ]
-
-        sections = [
-            section
-            for report in child_reports
-            for section in report.sections
-        ]
-        combined_citations = self._deduplicate_citations(
-            citation
-            for report in child_reports
-            for citation in report.citations
-        )[: active_options.max_citations]
-        combined_conflicts = [
-            conflict
-            for report in child_reports
-            for conflict in report.conflicts
-        ][: active_options.max_conflicts]
-
-        confidence = weighted_mean(
-            (
-                (report.confidence, Decimal("1"))
-                for report in child_reports
-            )
-        )
-
-        report_limitations = list(limitations or [])
-        if active_options.include_limitations and not report_limitations:
-            report_limitations = [
-                "The report combines multiple claims with different source coverage and confidence levels.",
-                "Estimates and predictions may change when newer records or model versions become available.",
-            ]
-
-        summary = sentence_join(
-            (
-                f"{len(claims)} material claim(s) were evaluated",
-                f"{len(combined_citations)} unique source citation(s) were used",
-                f"Overall confidence is {confidence}",
-                (
-                    f"{len(combined_conflicts)} source conflict(s) were identified"
-                    if combined_conflicts
-                    else "No material source conflicts were identified"
-                ),
-            )
-        )
-
-        combined_lineage = None
-        if active_options.include_lineage:
-            combined_lineage = LineageGraph()
-            for report in child_reports:
-                if report.lineage is None:
-                    continue
-                combined_lineage.nodes.update(report.lineage.nodes)
-                combined_lineage.edges.update(report.lineage.edges)
-
-        quality = self.quality_checker.evaluate(
-            claims=claims,
-            citations=combined_citations,
-            conflicts=combined_conflicts,
-            report_summary=summary,
-            limitations=report_limitations,
-        )
-
-        fingerprint = stable_hash(
-            {
-                "subject_type": subject_type,
-                "subject_id": subject_id,
-                "title": title,
-                "claims": [claim.to_dict() for claim in claims],
-                "citations": [citation.to_dict() for citation in combined_citations],
-                "conflicts": [conflict.to_dict() for conflict in combined_conflicts],
-                "confidence": str(confidence),
+        unsupported_claims = [
+            claim.claim
+            for claim in claim_explanations
+            if claim.status
+            in {
+                ClaimSupportStatus.UNSUPPORTED.value,
+                ClaimSupportStatus.REQUIRES_AUTHORIZED_SOURCE.value,
+                ClaimSupportStatus.REQUIRES_VALUATION_ENGINE.value,
             }
+        ]
+
+        unavailable_claims = [
+            item.field_path
+            for item in unavailable_data
+        ]
+
+        required_future_sources = self.collect_required_future_sources(
+            claim_explanations,
+            unavailable_data,
+            valuation_explanation,
+            listing_status_explanation,
         )
 
-        return ExplanationReport(
-            report_id=fingerprint[:24],
-            subject_type=subject_type,
-            subject_id=subject_id,
-            title=title,
+        confidence_context = self.extract_confidence_context(profile_payload)
+
+        summary = self.build_summary(
+            supported_claims=supported_claims,
+            unsupported_claims=unsupported_claims,
+            unavailable_data=unavailable_data,
+            manual_review_explanations=manual_review_explanations,
+            assessment_explanation=assessment_explanation,
+            listing_status_explanation=listing_status_explanation,
+            valuation_explanation=valuation_explanation,
+        )
+
+        report = SourceExplanationReport(
             summary=summary,
-            status=(
-                ExplanationStatus.COMPLETE
-                if quality.complete
-                else ExplanationStatus.PARTIAL
-            ),
-            confidence=confidence,
-            sections=sections,
-            citations=combined_citations,
-            claims=list(claims),
-            conflicts=combined_conflicts,
-            limitations=report_limitations,
-            lineage=combined_lineage,
-            generated_at=utcnow(),
-            fingerprint=fingerprint,
+            supported_claims=supported_claims,
+            unsupported_claims=unsupported_claims,
+            unavailable_claims=unavailable_claims,
+            public_record_limitations=list(STANDARD_SOURCE_LIMITATIONS),
+            required_future_sources=required_future_sources,
+            source_notes=self.build_source_notes(source_explanations),
+            claim_explanations=claim_explanations,
+            source_explanations=source_explanations,
+            unavailable_data=unavailable_data,
+            manual_review_explanations=manual_review_explanations,
+            assessment_explanation=assessment_explanation,
+            listing_status_explanation=listing_status_explanation,
+            valuation_explanation=valuation_explanation,
+            confidence_context=confidence_context,
+            governance=SOURCE_EXPLANATION_GOVERNANCE.copy(),
             metadata={
-                **dict(metadata or {}),
-                "quality": quality.to_dict(),
-                "child_report_ids": [report.report_id for report in child_reports],
+                "engine": SOURCE_EXPLANATION_ENGINE_NAME,
+                "version": SOURCE_EXPLANATION_ENGINE_VERSION,
+                "phase": SOURCE_EXPLANATION_ENGINE_PHASE,
+                "source_count": len(source_explanations),
+                "claim_count": len(claim_explanations),
+                "unavailable_count": len(unavailable_data),
+                "manual_review_count": len(manual_review_explanations),
+                "generated_at": utc_now(),
             },
         )
 
-    def _claim_confidence(
-        self,
-        *,
-        claim: Claim,
-        citations: Sequence[Citation],
-        supports: Sequence[ClaimSupport],
-        conflicts: Sequence[SourceConflict],
-    ) -> Decimal:
-        support_score = weighted_mean(
-            (
-                (
-                    support.strength
-                    if support.direction
-                    in {
-                        SupportDirection.SUPPORTS,
-                        SupportDirection.PARTIALLY_SUPPORTS,
-                    }
-                    else ZERO,
-                    Decimal("1"),
-                )
-                for support in supports
-            )
-        )
+        report.report_id = f"source-explanation-{stable_hash(report.to_dict())[:18]}"
 
-        citation_score = weighted_mean(
-            (
-                (citation.rank_score, citation.relevance)
-                for citation in citations
-            )
-        )
+        return report
 
-        conflict_penalty = max(
-            (conflict.disagreement_score for conflict in conflicts),
-            default=ZERO,
-        )
+    def explain(self, profile: Any) -> SourceExplanationReport:
+        return self.explain_profile(profile)
 
-        score = weighted_mean(
-            (
-                (claim.confidence, Decimal("0.35")),
-                (support_score, Decimal("0.35")),
-                (citation_score, Decimal("0.30")),
-            )
-        )
-        return clamp_score(score - conflict_penalty * Decimal("0.30"))
+    def build_profile_explanation(self, profile: Any) -> SourceExplanationReport:
+        return self.explain_profile(profile)
 
-    def _render_claim_narrative(
-        self,
-        *,
-        claim: Claim,
-        citations: Sequence[Citation],
-        confidence: Decimal,
-        conflicts: Sequence[SourceConflict],
-        options: ExplanationOptions,
-        metadata: Optional[Mapping[str, Any]],
-    ) -> str:
-        template_name = {
-            ClaimType.VALUATION: "valuation",
-            ClaimType.MARKET: "market",
-            ClaimType.RISK: "risk",
-        }.get(claim.claim_type, "fact")
-
-        narrative = self.templates.render(
-            template_name,
-            claim=claim,
-            citations=citations,
-            confidence=confidence,
-            metadata=metadata,
-        )
-
-        if options.include_conflicts and conflicts:
-            narrative = sentence_join(
-                (
-                    narrative,
-                    self.templates.render("conflict", conflicts=conflicts),
-                )
-            )
-
-        if options.tone == ExplanationTone.TECHNICAL:
-            narrative = sentence_join(
-                (
-                    narrative,
-                    f"Explanation fingerprint inputs include {len(citations)} citation record(s)",
-                )
-            )
-
-        return narrative
-
-    def _build_sections(
-        self,
-        *,
-        claim: Claim,
-        citations: Sequence[Citation],
-        conflicts: Sequence[SourceConflict],
-        confidence: Decimal,
-        narrative: str,
-        options: ExplanationOptions,
-    ) -> list[ExplanationSection]:
-        sections = [
-            ExplanationSection(
-                section_id=f"{claim.claim_id}:conclusion",
-                title="Conclusion",
-                narrative=narrative,
-                claims=[claim],
-                citations=list(citations),
-                conflicts=list(conflicts),
-                confidence=confidence,
-            )
-        ]
-
-        if options.depth in {ExplanationDepth.DETAILED, ExplanationDepth.AUDIT}:
-            supporting = [
-                citation
-                for citation in citations
-                if citation.support_direction
-                in {
-                    SupportDirection.SUPPORTS,
-                    SupportDirection.PARTIALLY_SUPPORTS,
-                }
-            ][: options.max_supporting_facts]
-
-            sections.append(
-                ExplanationSection(
-                    section_id=f"{claim.claim_id}:support",
-                    title="Supporting evidence",
-                    narrative=self._supporting_evidence_narrative(supporting),
-                    claims=[claim],
-                    citations=supporting,
-                    confidence=weighted_mean(
-                        (
-                            (citation.rank_score, citation.relevance)
-                            for citation in supporting
-                        )
-                    ),
-                )
-            )
-
-        if options.include_conflicts and conflicts:
-            sections.append(
-                ExplanationSection(
-                    section_id=f"{claim.claim_id}:conflicts",
-                    title="Conflicting evidence",
-                    narrative=self.templates.render(
-                        "conflict",
-                        conflicts=conflicts,
-                    ),
-                    claims=[claim],
-                    conflicts=list(conflicts),
-                    confidence=clamp_score(
-                        ONE
-                        - max(
-                            (
-                                conflict.disagreement_score
-                                for conflict in conflicts
-                            ),
-                            default=ZERO,
-                        )
-                    ),
-                )
-            )
-
-        if options.include_confidence:
-            sections.append(
-                ExplanationSection(
-                    section_id=f"{claim.claim_id}:confidence",
-                    title="Confidence",
-                    narrative=self.templates.render(
-                        "confidence",
-                        confidence=confidence,
-                        support_count=len(citations),
-                        conflict_count=len(conflicts),
-                    ),
-                    claims=[claim],
-                    confidence=confidence,
-                )
-            )
-
-        return sections
+    def generate(self, profile: Any) -> SourceExplanationReport:
+        return self.explain_profile(profile)
 
     @staticmethod
-    def _supporting_evidence_narrative(
-        citations: Sequence[Citation],
-    ) -> str:
-        if not citations:
-            return "No direct supporting citations were available."
+    def normalize_profile(profile: Any) -> dict[str, Any]:
+        payload = object_to_dict(profile)
 
-        source_names = sorted(
-            {citation.source.source_name for citation in citations}
-        )
-        return sentence_join(
-            (
-                f"{len(citations)} supporting citation(s) were selected",
-                f"Sources include {', '.join(source_names)}",
-            )
-        )
+        if isinstance(payload, Mapping):
+            return dict(payload)
 
-    @staticmethod
-    def _build_summary(
-        *,
-        claim: Claim,
-        confidence: Decimal,
-        citations: Sequence[Citation],
-        conflicts: Sequence[SourceConflict],
-        options: ExplanationOptions,
-    ) -> str:
-        parts = [
-            claim.statement,
-            f"Confidence is {confidence}",
-        ]
-
-        if options.include_sources:
-            parts.append(f"{len(citations)} source citation(s) were evaluated")
-
-        if options.include_conflicts:
-            if conflicts:
-                parts.append(f"{len(conflicts)} source conflict(s) were identified")
-            else:
-                parts.append("No material source conflicts were identified")
-
-        return sentence_join(parts)
-
-    @staticmethod
-    def _default_limitations(claim_type: ClaimType) -> list[str]:
-        common = [
-            "Source records may be incomplete, delayed, corrected, or superseded.",
-            "Confidence reflects available evidence and does not guarantee factual or future accuracy.",
-        ]
-
-        if claim_type == ClaimType.VALUATION:
-            common.extend(
-                [
-                    "Automated valuations are estimates and are not licensed appraisals.",
-                    "Property condition, renovations, concessions, and off-market information may not be fully represented.",
-                ]
-            )
-        elif claim_type == ClaimType.RISK:
-            common.extend(
-                [
-                    "Risk indicators do not replace legal, environmental, engineering, insurance, or inspection review.",
-                ]
-            )
-        elif claim_type == ClaimType.MARKET:
-            common.extend(
-                [
-                    "Market conditions can change quickly and may differ by property segment.",
-                ]
-            )
-
-        return common
-
-    @staticmethod
-    def _title_for_claim(claim: Claim) -> str:
         return {
-            ClaimType.VALUATION: "Property Valuation Explanation",
-            ClaimType.MARKET: "Market Intelligence Explanation",
-            ClaimType.RISK: "Property Risk Explanation",
-            ClaimType.ADDRESS: "Address Intelligence Explanation",
-            ClaimType.OWNERSHIP: "Ownership Record Explanation",
-            ClaimType.TAX: "Tax Record Explanation",
-            ClaimType.PREDICTION: "Prediction Explanation",
-            ClaimType.ESTIMATE: "Estimate Explanation",
-        }.get(claim.claim_type, "Property Intelligence Explanation")
+            "raw_profile": payload,
+        }
 
     @staticmethod
-    def _deduplicate_citations(
-        citations: Iterable[Citation],
-    ) -> list[Citation]:
-        output: dict[str, Citation] = {}
-        for citation in citations:
-            existing = output.get(citation.citation_id)
-            if existing is None or citation.rank_score > existing.rank_score:
-                output[citation.citation_id] = citation
-        return sorted(
-            output.values(),
-            key=lambda item: item.rank_score,
-            reverse=True,
-        )
+    def collect_required_future_sources(
+        claim_explanations: Sequence[ClaimExplanation],
+        unavailable_data: Sequence[UnavailableDataExplanation],
+        valuation_explanation: ValuationExplanation,
+        listing_status_explanation: ListingStatusExplanation,
+    ) -> list[str]:
+        sources: list[str] = []
 
+        for claim in claim_explanations:
+            if claim.required_source:
+                sources.append(claim.required_source)
 
-# ============================================================
-# SECTION 16 - DOMAIN-SPECIFIC EXPLANATION BUILDERS
-# ============================================================
+        for item in unavailable_data:
+            if item.required_source:
+                sources.append(item.required_source)
 
-class ValuationExplanationBuilder:
-    def build_claim(
-        self,
-        *,
-        property_id: str,
-        estimated_value: Any,
-        confidence: Any,
-        currency_code: str = "USD",
-        as_of: Optional[datetime] = None,
-        metadata: Optional[Mapping[str, Any]] = None,
-    ) -> Claim:
-        value = to_decimal(estimated_value)
-        statement = (
-            f"The estimated property value is {currency_code} "
-            f"{value.quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)}."
-        )
-        return Claim(
-            claim_id=stable_hash(
-                {
-                    "property_id": property_id,
-                    "estimated_value": str(value),
-                    "as_of": as_of,
-                }
-            )[:24],
-            statement=statement,
-            claim_type=ClaimType.VALUATION,
-            field_path="valuation.estimated_value",
-            value=value,
-            currency_code=currency_code,
-            confidence=clamp_score(confidence),
-            effective_at=as_of,
-            metadata=dict(metadata or {}),
-        )
+        if not valuation_explanation.valuation_available:
+            sources.append(valuation_explanation.required_source)
 
+        if not listing_status_explanation.listing_feed_connected:
+            sources.append(listing_status_explanation.required_source)
 
-class MarketExplanationBuilder:
-    def build_claim(
-        self,
-        *,
-        market_area_id: str,
-        statement: str,
-        value: Any = None,
-        confidence: Any = DEFAULT_EXPLANATION_CONFIDENCE,
-        field_path: str = "market.summary",
-        metadata: Optional[Mapping[str, Any]] = None,
-    ) -> Claim:
-        return Claim(
-            claim_id=stable_hash(
-                {
-                    "market_area_id": market_area_id,
-                    "statement": statement,
-                    "value": serialize_value(value),
-                }
-            )[:24],
-            statement=statement,
-            claim_type=ClaimType.MARKET,
-            field_path=field_path,
-            value=value,
-            confidence=clamp_score(confidence),
-            metadata=dict(metadata or {}),
-        )
+        return list(dict.fromkeys(sources))
 
+    @staticmethod
+    def extract_confidence_context(
+        profile_payload: Mapping[str, Any],
+    ) -> dict[str, Any]:
+        confidence = profile_payload.get("confidence_report") or {}
 
-class RiskExplanationBuilder:
-    def build_claim(
-        self,
-        *,
-        property_id: str,
-        risk_category: str,
-        risk_score: Any,
-        statement: Optional[str] = None,
-        confidence: Any = DEFAULT_EXPLANATION_CONFIDENCE,
-        metadata: Optional[Mapping[str, Any]] = None,
-    ) -> Claim:
-        normalized_score = clamp_score(risk_score)
-        resolved_statement = statement or (
-            f"The {risk_category} risk score is {normalized_score}."
-        )
+        if not isinstance(confidence, Mapping):
+            return {
+                "available": False,
+                "explanation": "Confidence report is not available.",
+            }
 
-        return Claim(
-            claim_id=stable_hash(
-                {
-                    "property_id": property_id,
-                    "risk_category": risk_category,
-                    "risk_score": str(normalized_score),
-                }
-            )[:24],
-            statement=resolved_statement,
-            claim_type=ClaimType.RISK,
-            field_path=f"risk.{safe_identifier(risk_category)}",
-            value=normalized_score,
-            confidence=clamp_score(confidence),
-            metadata=dict(metadata or {}),
-        )
+        return {
+            "available": True,
+            "overall_confidence": confidence.get("overall_confidence")
+            or confidence.get("confidence"),
+            "band": confidence.get("band"),
+            "decision": confidence.get("decision"),
+            "manual_review_required": confidence.get("manual_review_required"),
+            "explanation": confidence.get("explanation"),
+        }
 
+    @staticmethod
+    def build_source_notes(
+        source_explanations: Sequence[SourceExplanation],
+    ) -> list[str]:
+        notes = [
+            "Address intelligence prepares lookup input and does not prove property facts by itself.",
+            "Source explanations are generated from available evidence and source-governance rules.",
+        ]
 
-class PropertyFactExplanationBuilder:
-    def build_claim(
-        self,
-        *,
-        property_id: str,
-        field_path: str,
-        value: Any,
-        statement: Optional[str] = None,
-        confidence: Any = DEFAULT_EXPLANATION_CONFIDENCE,
-        metadata: Optional[Mapping[str, Any]] = None,
-    ) -> Claim:
-        resolved_statement = statement or (
-            f"The property record indicates {field_path} is {value}."
-        )
-        return Claim(
-            claim_id=stable_hash(
-                {
-                    "property_id": property_id,
-                    "field_path": field_path,
-                    "value": serialize_value(value),
-                }
-            )[:24],
-            statement=resolved_statement,
-            claim_type=ClaimType.FACT,
-            field_path=field_path,
-            value=value,
-            confidence=clamp_score(confidence),
-            metadata=dict(metadata or {}),
-        )
-
-
-# ============================================================
-# SECTION 17 - MODEL AND ORM INTEGRATION HELPERS
-# ============================================================
-
-def source_from_model_object(
-    obj: Any,
-    *,
-    category: SourceCategory = SourceCategory.OTHER,
-    authority: SourceAuthority = SourceAuthority.UNKNOWN,
-    source_name: Optional[str] = None,
-) -> SourceDescriptor:
-    resolved_name = (
-        source_name
-        or getattr(obj, "source_name", None)
-        or getattr(obj, "name", None)
-        or obj.__class__.__name__
-    )
-
-    return SourceDescriptor(
-        source_id=str(
-            getattr(
-                obj,
-                "id",
-                stable_hash(
-                    {
-                        "class": obj.__class__.__name__,
-                        "repr": repr(obj),
-                    }
-                )[:24],
+        if not source_explanations:
+            notes.append(
+                "No source-backed public-record source payloads were available in this profile."
             )
-        ),
-        source_name=resolved_name,
-        category=category,
-        authority=authority,
-        provider_name=getattr(obj, "provider_name", None),
-        record_id=getattr(obj, "source_record_id", None),
-        record_type=obj.__class__.__name__,
-        source_url=getattr(obj, "source_url", None),
-        observed_at=getattr(obj, "source_observed_at", None),
-        retrieved_at=getattr(obj, "source_retrieved_at", None),
-        effective_at=getattr(obj, "effective_at", None),
-        reliability=clamp_score(
-            getattr(obj, "confidence_score", DEFAULT_SOURCE_RELIABILITY)
-        ),
-        quality=clamp_score(
-            getattr(obj, "quality_score", DEFAULT_EXPLANATION_CONFIDENCE)
-        ),
-        freshness=clamp_score(
-            getattr(
-                obj,
-                "freshness_score",
-                DEFAULT_EXPLANATION_CONFIDENCE,
+
+        for source in source_explanations:
+            notes.append(source.explanation)
+
+        return list(dict.fromkeys(notes))
+
+    @staticmethod
+    def build_summary(
+        *,
+        supported_claims: Sequence[str],
+        unsupported_claims: Sequence[str],
+        unavailable_data: Sequence[UnavailableDataExplanation],
+        manual_review_explanations: Sequence[ManualReviewExplanation],
+        assessment_explanation: AssessmentExplanation,
+        listing_status_explanation: ListingStatusExplanation,
+        valuation_explanation: ValuationExplanation,
+    ) -> str:
+        pieces = []
+
+        if supported_claims:
+            pieces.append(
+                f"{len(supported_claims)} claim categories have some source-support context."
             )
-        ),
-        payload_hash=getattr(obj, "source_payload_hash", None),
-        metadata={
-            "object_type": obj.__class__.__name__,
-            "object_id": str(getattr(obj, "id", "")),
-        },
-    )
+        else:
+            pieces.append(
+                "No source-backed public-record claim categories are fully supported yet."
+            )
+
+        if unsupported_claims:
+            pieces.append(
+                f"{len(unsupported_claims)} claim categories are unsupported by public records alone."
+            )
+
+        if unavailable_data:
+            pieces.append(
+                f"{len(unavailable_data)} fields remain unavailable and are labeled explicitly."
+            )
+
+        if manual_review_explanations:
+            pieces.append(
+                f"{len(manual_review_explanations)} manual-review items require attention."
+            )
+
+        pieces.append(assessment_explanation.explanation)
+        pieces.append(listing_status_explanation.explanation)
+        pieces.append(valuation_explanation.explanation)
+
+        return " ".join(piece for piece in pieces if piece)
 
 
-def citation_from_observation(
-    observation: Any,
-    *,
-    source: Optional[SourceDescriptor] = None,
-    label: Optional[str] = None,
-    support_direction: SupportDirection = SupportDirection.SUPPORTS,
-) -> Citation:
-    resolved_source = source or source_from_model_object(
-        observation,
-        category=SourceCategory.PUBLIC_RECORD,
-        authority=SourceAuthority.AUTHORITATIVE,
-    )
+# ============================================================
+# SECTION 16 - CONVENIENCE API
+# ============================================================
 
-    value = None
-    if hasattr(observation, "materialized_value"):
-        try:
-            value = observation.materialized_value()
-        except Exception:
-            value = None
-
-    if value is None:
-        for attribute in (
-            "value_numeric",
-            "value_text",
-            "value_boolean",
-            "value_date",
-            "value_datetime",
-            "value_json",
-        ):
-            possible = getattr(observation, attribute, None)
-            if possible is not None:
-                value = possible
-                break
-
-    builder = CitationBuilder()
-    return builder.build(
-        source=resolved_source,
-        label=label,
-        field_path=getattr(observation, "field_path", None),
-        value=value,
-        confidence=getattr(
-            observation,
-            "confidence_score",
-            DEFAULT_EXPLANATION_CONFIDENCE,
-        ),
-        support_direction=support_direction,
-        metadata={
-            "observation_id": str(getattr(observation, "id", "")),
-            "observation_type": serialize_value(
-                getattr(observation, "observation_type", None)
-            ),
-        },
-    )
+_default_source_explanation_engine = SourceExplanationEngine()
 
 
-def apply_explanation_to_report_model(
-    target: Any,
-    report: ExplanationReport,
-) -> Any:
-    if hasattr(target, "title"):
-        target.title = report.title
-    if hasattr(target, "executive_summary"):
-        target.executive_summary = report.summary
-    if hasattr(target, "sections"):
-        target.sections = [section.to_dict() for section in report.sections]
-    if hasattr(target, "citations"):
-        target.citations = [citation.to_dict() for citation in report.citations]
-    if hasattr(target, "content_hash"):
-        target.content_hash = report.fingerprint
-    if hasattr(target, "metadata_json") and isinstance(target.metadata_json, dict):
-        target.metadata_json["source_explanation_engine"] = report.to_dict()
-    return target
+def explain_profile_sources(profile: Any) -> SourceExplanationReport:
+    return _default_source_explanation_engine.explain_profile(profile)
 
 
-def explanation_to_audit_payload(
-    report: ExplanationReport,
+def build_source_explanation_report(profile: Any) -> SourceExplanationReport:
+    return _default_source_explanation_engine.explain_profile(profile)
+
+
+def explain_sources(profile: Any) -> SourceExplanationReport:
+    return _default_source_explanation_engine.explain_profile(profile)
+
+
+def explain_profile(profile: Any) -> SourceExplanationReport:
+    return _default_source_explanation_engine.explain_profile(profile)
+
+
+def source_explanation_to_public_api_payload(
+    report: SourceExplanationReport,
 ) -> dict[str, Any]:
+    return report.to_dict()
+
+
+# ============================================================
+# SECTION 17 - HEALTH, READINESS, AND DIAGNOSTICS
+# ============================================================
+
+def validate_source_explanation_governance() -> dict[str, Any]:
+    issues: list[dict[str, Any]] = []
+
+    false_keys = [
+        "fabricated_source_support_allowed",
+        "fabricated_property_facts_allowed",
+        "fabricated_listing_status_allowed",
+        "fabricated_market_value_allowed",
+        "assessment_as_market_value_allowed",
+        "public_records_as_listing_feed_allowed",
+    ]
+
+    for key in false_keys:
+        if SOURCE_EXPLANATION_GOVERNANCE.get(key):
+            issues.append(
+                {
+                    "issue_code": f"{key}_must_remain_false",
+                    "severity": "critical",
+                    "message": f"{key} must remain False.",
+                }
+            )
+
+    true_keys = [
+        "manual_review_disclosure_required",
+        "unsupported_claims_must_be_labeled",
+        "unavailable_fields_must_be_labeled",
+        "future_required_sources_must_be_named",
+        "source_limitations_must_be_explained",
+        "confidence_context_required",
+    ]
+
+    for key in true_keys:
+        if not SOURCE_EXPLANATION_GOVERNANCE.get(key):
+            issues.append(
+                {
+                    "issue_code": f"{key}_must_remain_true",
+                    "severity": "critical",
+                    "message": f"{key} must remain True.",
+                }
+            )
+
     return {
-        "entity_type": "property_intelligence_explanation",
-        "entity_id": report.report_id,
-        "action": "generated",
-        "after_state": report.to_dict(),
-        "change_summary": [
-            f"Generated {len(report.claims)} claim explanation(s).",
-            f"Attached {len(report.citations)} citation(s).",
-            f"Detected {len(report.conflicts)} conflict(s).",
-        ],
-        "metadata": {
-            "fingerprint": report.fingerprint,
-            "status": report.status.value,
-            "confidence": str(report.confidence),
+        "valid": not issues,
+        "issue_count": len(issues),
+        "issues": issues,
+        "checked_at": utc_now(),
+    }
+
+
+def get_source_explanation_engine_metadata() -> dict[str, Any]:
+    return {
+        "name": SOURCE_EXPLANATION_ENGINE_NAME,
+        "version": SOURCE_EXPLANATION_ENGINE_VERSION,
+        "phase": SOURCE_EXPLANATION_ENGINE_PHASE,
+        "status": SOURCE_EXPLANATION_ENGINE_STATUS,
+        "release_channel": SOURCE_EXPLANATION_RELEASE_CHANNEL,
+        "generated_at": utc_now(),
+    }
+
+
+def get_source_explanation_engine_health() -> dict[str, Any]:
+    governance = validate_source_explanation_governance()
+
+    sample_profile = {
+        "canonical_address": "43 Wetmore Ave, Morristown, NJ 07960",
+        "tax_assessment_context": {
+            "total_assessment": 500000,
+            "tax_year": "2026",
+            "source_status": "source_backed",
+            "sources": [
+                {
+                    "source_name": "Sample Tax Board Source",
+                    "source_type": "morris_tax_board",
+                    "confidence": 0.75,
+                    "retrieved_at": utc_now(),
+                }
+            ],
         },
+        "listing_status_context": {},
+        "valuation_readiness": {
+            "ready": False,
+            "estimate_allowed": False,
+            "available_inputs": ["tax_assessment"],
+            "required_missing_inputs": ["comparable_sales", "valuation_model"],
+        },
+        "manual_review_items": [],
+        "unavailable_fields": [],
+    }
+
+    sample = explain_profile_sources(sample_profile)
+
+    return {
+        "name": SOURCE_EXPLANATION_ENGINE_NAME,
+        "version": SOURCE_EXPLANATION_ENGINE_VERSION,
+        "phase": SOURCE_EXPLANATION_ENGINE_PHASE,
+        "status": SOURCE_EXPLANATION_ENGINE_STATUS,
+        "governance_valid": governance["valid"],
+        "governance_issue_count": governance["issue_count"],
+        "sample_report_created": bool(sample.report_id),
+        "sample_supported_claim_count": len(sample.supported_claims),
+        "sample_unsupported_claim_count": len(sample.unsupported_claims),
+        "fabricated_source_support_allowed": False,
+        "fabricated_listing_status_allowed": False,
+        "assessment_as_market_value_allowed": False,
+        "generated_at": utc_now(),
+    }
+
+
+def get_source_explanation_engine_readiness() -> dict[str, Any]:
+    health = get_source_explanation_engine_health()
+
+    required = {
+        "governance_valid": health["governance_valid"],
+        "sample_report_created": health["sample_report_created"],
+    }
+
+    return {
+        "ready": all(required.values()),
+        "required": required,
+        "missing_required": [
+            key
+            for key, value in required.items()
+            if not value
+        ],
+        "next_files": [
+            "app/web/property_routes.py",
+            "app/public_records/public_records_engine.py",
+            "app/public_records/connectors/nj_morris_tax_board_connector.py",
+            "app/public_records/connectors/nj_morris_gis_connector.py",
+        ],
+        "generated_at": utc_now(),
+    }
+
+
+def get_source_explanation_engine_diagnostics() -> dict[str, Any]:
+    return {
+        "metadata": get_source_explanation_engine_metadata(),
+        "health": get_source_explanation_engine_health(),
+        "readiness": get_source_explanation_engine_readiness(),
+        "governance": SOURCE_EXPLANATION_GOVERNANCE.copy(),
+        "governance_validation": validate_source_explanation_governance(),
+        "public_record_supported_claims": PUBLIC_RECORD_SUPPORTED_CLAIMS,
+        "public_record_unsupported_claims": PUBLIC_RECORD_UNSUPPORTED_CLAIMS,
+        "future_required_sources": FUTURE_REQUIRED_SOURCES,
+        "standard_source_limitations": STANDARD_SOURCE_LIMITATIONS,
+        "exports": __all__,
+        "generated_at": utc_now(),
     }
 
 
 # ============================================================
-# SECTION 18 - BATCH EXPLANATION PROCESSING
-# ============================================================
-
-@dataclass(slots=True)
-class BatchExplanationItem:
-    key: str
-    report: ExplanationReport
-
-    def to_dict(self) -> dict[str, Any]:
-        return {
-            "key": self.key,
-            "report": self.report.to_dict(),
-        }
-
-
-@dataclass(slots=True)
-class BatchExplanationResult:
-    total: int
-    complete: int
-    partial: int
-    average_confidence: Decimal
-    citation_count: int
-    conflict_count: int
-    items: list[BatchExplanationItem]
-
-    def to_dict(self) -> dict[str, Any]:
-        return {
-            "total": self.total,
-            "complete": self.complete,
-            "partial": self.partial,
-            "average_confidence": str(clamp_score(self.average_confidence)),
-            "citation_count": self.citation_count,
-            "conflict_count": self.conflict_count,
-            "items": [item.to_dict() for item in self.items],
-        }
-
-
-class BatchSourceExplanationProcessor:
-    def __init__(
-        self,
-        *,
-        engine: Optional[SourceExplanationEngine] = None,
-    ) -> None:
-        self.engine = engine or SourceExplanationEngine()
-
-    def process(
-        self,
-        requests: Mapping[
-            str,
-            Mapping[str, Any],
-        ],
-    ) -> BatchExplanationResult:
-        items: list[BatchExplanationItem] = []
-
-        for key, request in requests.items():
-            report = self.engine.explain_claim(
-                claim=request["claim"],
-                citations=request.get("citations", []),
-                subject_type=request.get("subject_type", "property"),
-                subject_id=request.get("subject_id", key),
-                options=request.get("options"),
-                transformations=request.get("transformations"),
-                limitations=request.get("limitations"),
-                metadata=request.get("metadata"),
-            )
-            items.append(BatchExplanationItem(key=key, report=report))
-
-        total = len(items)
-        average_confidence = (
-            sum((item.report.confidence for item in items), ZERO)
-            / Decimal(total)
-            if total
-            else ZERO
-        )
-
-        return BatchExplanationResult(
-            total=total,
-            complete=sum(
-                1
-                for item in items
-                if item.report.status == ExplanationStatus.COMPLETE
-            ),
-            partial=sum(
-                1
-                for item in items
-                if item.report.status == ExplanationStatus.PARTIAL
-            ),
-            average_confidence=clamp_score(average_confidence),
-            citation_count=sum(len(item.report.citations) for item in items),
-            conflict_count=sum(len(item.report.conflicts) for item in items),
-            items=items,
-        )
-
-
-# ============================================================
-# SECTION 19 - DEFAULT ENGINE AND CONVENIENCE API
-# ============================================================
-
-_default_engine = SourceExplanationEngine()
-_default_citation_builder = CitationBuilder()
-
-
-def explain_claim(
-    *,
-    claim: Claim,
-    citations: Sequence[Citation],
-    subject_type: str,
-    subject_id: str,
-    options: Optional[ExplanationOptions] = None,
-    transformations: Optional[Sequence[Mapping[str, Any]]] = None,
-    limitations: Optional[Sequence[str]] = None,
-    metadata: Optional[Mapping[str, Any]] = None,
-) -> ExplanationReport:
-    return _default_engine.explain_claim(
-        claim=claim,
-        citations=citations,
-        subject_type=subject_type,
-        subject_id=subject_id,
-        options=options,
-        transformations=transformations,
-        limitations=limitations,
-        metadata=metadata,
-    )
-
-
-def build_citation(
-    *,
-    source: SourceDescriptor,
-    label: Optional[str] = None,
-    citation_type: Optional[CitationType] = None,
-    locator: Optional[str] = None,
-    excerpt: Optional[str] = None,
-    field_path: Optional[str] = None,
-    value: Any = None,
-    confidence: Any = DEFAULT_EXPLANATION_CONFIDENCE,
-    relevance: Any = ONE,
-    support_direction: SupportDirection = SupportDirection.SUPPORTS,
-    metadata: Optional[Mapping[str, Any]] = None,
-) -> Citation:
-    return _default_citation_builder.build(
-        source=source,
-        label=label,
-        citation_type=citation_type,
-        locator=locator,
-        excerpt=excerpt,
-        field_path=field_path,
-        value=value,
-        confidence=confidence,
-        relevance=relevance,
-        support_direction=support_direction,
-        metadata=metadata,
-    )
-
-
-# ============================================================
-# SECTION 20 - PUBLIC EXPORTS
+# SECTION 18 - PUBLIC EXPORTS
 # ============================================================
 
 __all__ = [
-    # constants and helpers
-    "DEFAULT_SOURCE_RELIABILITY",
-    "DEFAULT_EXPLANATION_CONFIDENCE",
-    "clamp_score",
-    "weighted_mean",
-    "stable_hash",
-    "normalize_text",
-    "safe_identifier",
-    # enums
+    "SOURCE_EXPLANATION_ENGINE_NAME",
+    "SOURCE_EXPLANATION_ENGINE_VERSION",
+    "SOURCE_EXPLANATION_ENGINE_PHASE",
+    "SOURCE_EXPLANATION_ENGINE_STATUS",
+    "SOURCE_EXPLANATION_RELEASE_CHANNEL",
+    "SOURCE_EXPLANATION_GOVERNANCE",
+    "PUBLIC_RECORD_SUPPORTED_CLAIMS",
+    "PUBLIC_RECORD_UNSUPPORTED_CLAIMS",
+    "FUTURE_REQUIRED_SOURCES",
+    "STANDARD_SOURCE_LIMITATIONS",
+    "ClaimSupportStatus",
+    "ExplanationSeverity",
     "SourceCategory",
-    "SourceAuthority",
-    "CitationType",
-    "ClaimType",
-    "SupportDirection",
-    "ExplanationAudience",
-    "ExplanationDepth",
-    "ExplanationTone",
-    "ConflictResolutionStatus",
-    "LineageNodeType",
-    "LineageEdgeType",
-    "ExplanationStatus",
-    # contracts
-    "SourceDescriptor",
-    "Citation",
-    "Claim",
-    "ClaimSupport",
-    "SourceConflict",
-    "LineageNode",
-    "LineageEdge",
-    "LineageGraph",
-    "ExplanationOptions",
-    "ExplanationSection",
-    "ExplanationReport",
-    "ExplanationQualityResult",
-    "BatchExplanationItem",
-    "BatchExplanationResult",
-    # services
-    "SourceRanker",
-    "CitationBuilder",
-    "ClaimSupportEvaluator",
-    "SourceConflictDetector",
-    "SourceConflictResolver",
-    "LineageBuilder",
-    "ExplanationTemplateRegistry",
-    "ExplanationQualityChecker",
-    "SourceExplanationEngine",
+    "RequiredSourceType",
+    "SourceCapability",
+    "ClaimExplanation",
+    "SourceExplanation",
+    "UnavailableDataExplanation",
+    "ManualReviewExplanation",
+    "AssessmentExplanation",
+    "ListingStatusExplanation",
+    "ValuationExplanation",
+    "SourceExplanationReport",
+    "PropertySourceExplanationReport",
+    "SourceExplanationResult",
+    "SourceCapabilityRegistry",
+    "ClaimClassifier",
+    "SourceExtractor",
+    "SourceExplanationBuilder",
+    "ClaimExplanationBuilder",
+    "UnavailableDataExplanationBuilder",
+    "ManualReviewExplanationBuilder",
+    "AssessmentExplanationBuilder",
+    "ListingStatusExplanationBuilder",
     "ValuationExplanationBuilder",
-    "MarketExplanationBuilder",
-    "RiskExplanationBuilder",
-    "PropertyFactExplanationBuilder",
-    "BatchSourceExplanationProcessor",
-    # integration
-    "source_from_model_object",
-    "citation_from_observation",
-    "apply_explanation_to_report_model",
-    "explanation_to_audit_payload",
-    # convenience
-    "explain_claim",
-    "build_citation",
+    "SourceExplanationEngine",
+    "explain_profile_sources",
+    "build_source_explanation_report",
+    "explain_sources",
+    "explain_profile",
+    "source_explanation_to_public_api_payload",
+    "validate_source_explanation_governance",
+    "get_source_explanation_engine_metadata",
+    "get_source_explanation_engine_health",
+    "get_source_explanation_engine_readiness",
+    "get_source_explanation_engine_diagnostics",
 ]
+
+
+# ============================================================
+# END OF FILE
+# ============================================================
